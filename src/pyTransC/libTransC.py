@@ -22,6 +22,8 @@ import warnings
 import os
 from functools import partial
 import scipy.stats as stats
+from scipy.optimize import minimize
+import numdifftools as nd
 
 multiprocessing.set_start_method("fork")
 
@@ -1375,11 +1377,12 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
     def run_laplace_evidence_approximation(
         self,
         log_posterior,
+        map_models, 
         log_posterior_args=[],
         ensemble_per_state=None,
         log_posterior_ens=None,
         verbose=False,
-        map_per_state=None,
+        optimize=False,
         **kwargs,  # Arguments for sklearn.mixture.GaussianMixture
     ):
         """
@@ -1391,23 +1394,29 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
                                       up to a multiplicative constant, for each state. 
                                       (Not used if ensemble_per_state and log_posterior_ens lists are provided)
                                       Calling sequence log_posterior(x,state,*log_posterior_args)
-        log_posterior_args          : list, optional. Additional (optional) arguments required by user function log_posterior.
+        map_models - floats         : List of MAP models in each state where Laplace approximation is evaluated. 
+                                      If optimize=True and a log_posterior() function is supplied, then 
+                                      scipy.minimize is used to find MAP models in each state using map_models as starting guesses.
+        log_posterior_args          : Optional list of additional arguments required by user function log_posterior.
         ensemble_per_state - floats : Optional list of posterior samples in each state, format [i][j][k],(i=1,...,nsamples;j=1,..., nmodels;k=1,...,ndim[i]).
         log_posterior_ens - floats  : Optional list of log-posterior densities of samples in each state, format [i][j],(i=1,...,nstates;j=1,..., nsamples).
-        map_per_state - floats      : Optional list of model space points in each state where Laplace approximation is evaluated. 
-                                      If None then scipy.minimize is used to find MAP models in each state (Only if log_posterior function supplied.) 
+        optimize, bool              : Logical to decide whether to use optimization for MAP models (Only relevant if log_posterior()) function supplied.)
         
         Attributes defined:
         -------
-        relative_marginal_likelihoods - nstates*float : list of log-evidence/marginal Likelihoods for each state.
+        log_marginal_likelihoods_laplace - nstates*float : list of log-evidence/marginal Likelihoods for each state.
 
         Notes:
-        Calculates Laplace approximations to evidence integrals in each state. This is equivalent to fitting a Gaussian about the MAP in model space.
-        Here the Hessian in each state is calculated either by numerical differentiation tools (if a log_posterior function is supplied), 
-        or by taking the covariance of the given ensemble.
-        The best fit model is similarly taken as the maximum of the log-posterior (if an ensemble is given), or a MAP model in each state is supplied.  
-        Alternatively, if `optimize=True` then an attempt is made to locate the MAP model in each state via optimization.
+        Calculates Laplace approximations to evidence integrals in each state. This is equivalent to fitting a Gaussian about the MAP in model 
+        space. Here the Hessian in each state is calculated either by numerical differentiation tools (if a log_posterior function is supplied), 
+        or by taking the covariance of the given ensemble. The MAP model is similarly taken as the maximum of the log-posterior 
+        (if an ensemble is given), or a MAP model in each is estimated by optimization.  
+        Alternatively, if the list `map_models` is given then these are used within each state as MAP models.
+
+        This implements equation 10.14 of Raftery (1996) evaluating Laplace's approximation to Bayesian evidence.
         
+        Raftery, A.E. (1996) Hypothesis Testing and Model Selection. In: Gilks, W., Richardson, S. and Speigelhalter, D.J., Eds., 
+        Markov Chain Monte Carlo in Practice, Chapman and Hall, 163-187.
         """
 
         if (ensemble_per_state is None) and (log_posterior_ens is not None):
@@ -1423,23 +1432,61 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
         if type(ensemble_per_state) == list and type(log_posterior_ens) == list: # we use input ensemble
             if(verbose): print("run_laplace_evidence_approximation: We are using input ensembles rather than input log_posterior function")
 
-            #self.relative_marginal_likelihoods_laplace = log_posterior_ens
-
             # we fit a mean and covariance to esnembles in each state
-            if(verbose): print(" We are fitting mean and covariance")
+            #if(verbose): print("Fitting mean and covariance of input ensembles")
             covs_, maps_,lpms_ = [],[],[]
+            lml = []
             for state in range(len(ensemble_per_state)): #loop over states
                 covs_.append(np.cov(ensemble_per_state[state].T)) # calculate covariance matrices for state
                 j = np.argmax(log_posterior_ens[state])  # get map model index  
                 maps_.append(ensemble_per_state[state][j])  # get map model 
                 lpms_.append(log_posterior_ens[state][j])
+                covar = np.cov(ensemble_per_state[state].T)
+                p1 = ((self.ndims[state]/2.)*np.log(2*np.pi))
+                p3 = log_posterior_ens[state][j]
+                # get determinant of negative inverse of covariance (-H) (NB determinant sign depends on dimension being odd or even)
+                if(self.ndims[state] % 2): # dimension is odd number
+                    if(self.ndims[state] == 1):
+                        p2 = 0.5*np.log(covar)
+                    else:
+                        p2 = 0.5*np.log(np.linalg.det(covar))
+                else:
+                    p2 = 0.5*np.log(np.linalg.det(-covar))
+                lml.append(p1+p2+p3)
             laplace_hessians =  covs_
             map_models_per_state = maps_
             map_log_posteriors = lpms_
-        else:
-            
-            pass
+        else: # we are using the supplied log_posterior() function so need Hessian and MAp model
+            if(verbose): 
+                if(optimize): 
+                    print("run_laplace_evidence_approximation: We are using input log_posterior function with optimization for MAP models")
+                else:
+                    print("run_laplace_evidence_approximation: We are using input log_posterior function with provided MAP models")
 
+            laplace_hessians,map_models_per_state,map_log_posteriors = [],[],[]
+            lml = []
+            for state in range(self.nstates):
+                fun = lambda x: log_posterior(x, state, *log_posterior_args)
+                if(optimize):
+                    fun2 = lambda x: -log_posterior(x, state, *log_posterior_args)
+                    soln = minimize(fun2, map_models[state])
+                    map_model = soln.x
+                else:
+                    map_model = np.array(map_models[state])
+                dfun = nd.Hessian(fun)
+                laplace_hessians.append(dfun(map_model))
+                map_models_per_state.append(map_model)
+                map_log_posteriors.append(fun(map_model))
+                
+                p1 = ((self.ndims[state]/2.)*np.log(2*np.pi))
+                p3 = fun(map_model)
+                det = np.linalg.det(-dfun(map_model))
+                #print(det)
+                p2 = -0.5*np.log(det)
+                lml.append(p1+p2+p3)
+        
+        self.log_marginal_likelihoods_laplace = lml
+            
     def get_visits_to_states(  # calculate evolution of relative visits to each state along chain
         self,
         discard=0,
