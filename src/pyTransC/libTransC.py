@@ -457,6 +457,8 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
                                       up to a multiplicative constant, for each state. (Not used if ensemble_per_state and log_posterior_ens lists are provided)
                                       Calling sequence log_posterior(x,state,*log_posterior_args)
         log_posterior_args          : list, optional. Additional (optional) arguments required by user function log_posterior.
+        ensemble_per_state - floats : Optional list of posterior samples in each state, format [i][j][k],(i=1,...,nstates;j=1,..., nsamples;k=1,...,ndim[i]).
+        log_posterior_ens - floats  : Optional list of log-posterior densities of samples in each state, format [i][j],(i=1,...,nstates;j=1,..., nsamples).
         discard - int, or list      : number of output samples to discard (default = 0). (Parameter passed to emcee, also known as `burnin'.)
         thin - int, or list         : frequency of output samples in output chains to accept (default = 1, i.e. all) (Parameter passed to emcee.)
         autothin - bool             : if true ignores input thin value and instead thins the chain by the maximum auto_correlation time estimated (default = False).
@@ -618,7 +620,6 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
         **kwargs,
     ):
         """
-
         MCMC sampler over independent states using emcee fixed dimension sampler over trans-D product space.
 
         Inputs:
@@ -1281,7 +1282,7 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
 
         return state_chain, state_chain_tot, accept
 
-    def run_ens_mcint(  #  Independent state Marginal Likelihoods from Monte Carlo integration
+    def run_ens_mcint(  #  Marginal Likelihoods from Monte Carlo integration
         self,
         log_posterior_ens=None,
         log_pseudo_prior_ens=None,
@@ -1370,6 +1371,74 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
             return ens_r / tot
         else:
             self.relative_marginal_likelihoods = ens_r / tot
+
+    def run_laplace_evidence_approximation(
+        self,
+        log_posterior,
+        log_posterior_args=[],
+        ensemble_per_state=None,
+        log_posterior_ens=None,
+        verbose=False,
+        map_per_state=None,
+        **kwargs,  # Arguments for sklearn.mixture.GaussianMixture
+    ):
+        """
+        Function to perform Laplace interation for evidence approximation within each state, using either an input log-posterior function, or posterior ensembles.
+
+        Parameters
+        ----------
+        log_posterior : function    : Supplied function evaluating the log-posterior function
+                                      up to a multiplicative constant, for each state. 
+                                      (Not used if ensemble_per_state and log_posterior_ens lists are provided)
+                                      Calling sequence log_posterior(x,state,*log_posterior_args)
+        log_posterior_args          : list, optional. Additional (optional) arguments required by user function log_posterior.
+        ensemble_per_state - floats : Optional list of posterior samples in each state, format [i][j][k],(i=1,...,nsamples;j=1,..., nmodels;k=1,...,ndim[i]).
+        log_posterior_ens - floats  : Optional list of log-posterior densities of samples in each state, format [i][j],(i=1,...,nstates;j=1,..., nsamples).
+        map_per_state - floats      : Optional list of model space points in each state where Laplace approximation is evaluated. 
+                                      If None then scipy.minimize is used to find MAP models in each state (Only if log_posterior function supplied.) 
+        
+        Attributes defined:
+        -------
+        relative_marginal_likelihoods - nstates*float : list of log-evidence/marginal Likelihoods for each state.
+
+        Notes:
+        Calculates Laplace approximations to evidence integrals in each state. This is equivalent to fitting a Gaussian about the MAP in model space.
+        Here the Hessian in each state is calculated either by numerical differentiation tools (if a log_posterior function is supplied), 
+        or by taking the covariance of the given ensemble.
+        The best fit model is similarly taken as the maximum of the log-posterior (if an ensemble is given), or a MAP model in each state is supplied.  
+        Alternatively, if `optimize=True` then an attempt is made to locate the MAP model in each state via optimization.
+        
+        """
+
+        if (ensemble_per_state is None) and (log_posterior_ens is not None):
+            raise Inputerror(
+                msg=" In function run_laplace_evidence_approximation: Ensemble probabilities provided as argument without ensemble co-ordinates"
+            )
+
+        if (ensemble_per_state is not None) and (log_posterior_ens is None):
+            raise Inputerror(
+                msg=" In function run_laplace_evidence_approximation: Ensemble co-ordinates provided as argument without ensemble probabilities"
+            )
+
+        if type(ensemble_per_state) == list and type(log_posterior_ens) == list: # we use input ensemble
+            if(verbose): print("run_laplace_evidence_approximation: We are using input ensembles rather than input log_posterior function")
+
+            #self.relative_marginal_likelihoods_laplace = log_posterior_ens
+
+            # we fit a mean and covariance to esnembles in each state
+            if(verbose): print(" We are fitting mean and covariance")
+            covs_, maps_,lpms_ = [],[],[]
+            for state in range(len(ensemble_per_state)): #loop over states
+                covs_.append(np.cov(ensemble_per_state[state].T)) # calculate covariance matrices for state
+                j = np.argmax(log_posterior_ens[state])  # get map model index  
+                maps_.append(ensemble_per_state[state][j])  # get map model 
+                lpms_.append(log_posterior_ens[state][j])
+            laplace_hessians =  covs_
+            map_models_per_state = maps_
+            map_log_posteriors = lpms_
+        else:
+            
+            pass
 
     def get_visits_to_states(  # calculate evolution of relative visits to each state along chain
         self,
