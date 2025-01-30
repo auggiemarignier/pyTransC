@@ -1449,9 +1449,11 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
                     if(self.ndims[state] == 1):
                         p2 = 0.5*np.log(covar)
                     else:
-                        p2 = 0.5*np.log(np.linalg.det(covar))
+                        sign,logabsdet = np.linalg.slogdet(covar)
+                        p2 = 0.5*sign*logabsdet
                 else:
-                    p2 = 0.5*np.log(np.linalg.det(-covar))
+                    sign,logabsdet = np.linalg.slogdet(-covar)
+                    p2 = 0.5*sign*logabsdet
                 lml.append(p1+p2+p3)
             laplace_hessians =  covs_
             map_models_per_state = maps_
@@ -1480,9 +1482,15 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
                 
                 p1 = ((self.ndims[state]/2.)*np.log(2*np.pi))
                 p3 = fun(map_model)
-                det = np.linalg.det(-dfun(map_model))
                 #print(det)
-                p2 = -0.5*np.log(det)
+                if(self.ndims[state] == 1):
+                     p2 = -0.5*np.log(-dfun(map_model))
+                else:
+                    #det = np.linalg.det(-dfun(map_model))
+                    sign,logabsdet = np.linalg.slogdet(-dfun(map_model))
+                    #print(det,np.log(det),sign,logabsdet)
+                    p2 = -0.5*sign*logabsdet
+
                 lml.append(p1+p2+p3)
         
         self.log_marginal_likelihoods_laplace = lml
