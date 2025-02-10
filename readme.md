@@ -21,9 +21,9 @@ This package of with a single class `TransC_Sampler` implementing three separate
 
 `run_product_space_sampler()` - implements a fixed dimension MCMC sampler over the product space of the states, and extracts a TransC/TransD ensemble. 
 
-`run_pseudo_sampler()` - implements an RJ-MCMC style algorithm using psedu-prior proposals and balance conditions. 
+`run_state_jump_sampler()` - implements an RJ-MCMC style algorithm using pseudo-prior proposals and balance conditions. 
 
-`run_ensemble_sampler()` - implements a single parameter Metropolis sampler over the state indicator variable. Requires posterior ensembles in eacdh state.
+`run_ensemble_resampler()` - implements a single parameter Metropolis sampler over the state indicator variable. Requires posterior ensembles in each state to be precomputed.
 
 Other utility functions include:
 
@@ -33,9 +33,9 @@ Other utility functions include:
 
 `get_transc_samples()` - creates posterior TransC/TransD ensemble from results of any sample.
 
-Here is the docstring of the function `run_ensemble_sampler ()`:
+Here is the docstring of the function `run_ensemble_resampler ()`:
 
-        """
+       """
         MCMC sampler over independent states using a Markov Chain.
 
         Calculates relative evdience of each state by sampling over previously computed posterior ensembles for each state.
@@ -44,7 +44,7 @@ Here is the docstring of the function `run_ensemble_sampler ()`:
         Here a single Markov chain is used.
 
         Inputs:
-        nwalkers - int                                                       : number of random walkers used by ensemble sampler.
+        nwalkers - int                                                       : number of random walkers used by ensemble resampler.
         nsteps - int                                                         : number of Markov chain steps to perform
         log_posterior_ens -  list of floats, [i,n[i]], (i=1,...,nstates)     : log-posterior of ensembles in each state, where n[i] is the number of samples in the ith state.
         log_pseudo_prior_ens -  list of floats, [i,n[i]], (i=1,...,nstates)  : log-pseudo prior of samples in each state, where n[i] is the number of samples in the ith state.
@@ -58,6 +58,7 @@ Here is the docstring of the function `run_ensemble_sampler ()`:
         nsamples - int                                : list of number of samples in each state (calculated from input ensembles if provided).
         state_chain_tot - nsamples*int                : array of states visited along the trans-D chain.
         alg - string                                  : string defining the sampler method used.
+
 
         Notes:
         The input posterior samples and log posterior values in each state can be either be calcuated using utility routine 'run_mcmc_per_state', or provided by the user.
