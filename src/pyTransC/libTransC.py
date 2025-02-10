@@ -1456,8 +1456,8 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
                     p2 = 0.5*sign*logabsdet
                 lml.append(p1+p2+p3)
             laplace_hessians =  covs_
-            map_models_per_state = maps_
-            map_log_posteriors = lpms_
+            laplace_map_models_per_state = maps_
+            laplace_map_log_posteriors = lpms_
         else: # we are using the supplied log_posterior() function so need Hessian and MAp model
             if(verbose): 
                 if(optimize): 
@@ -1465,7 +1465,7 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
                 else:
                     print("run_laplace_evidence_approximation: We are using input log_posterior function with provided MAP models")
 
-            laplace_hessians,map_models_per_state,map_log_posteriors = [],[],[]
+            laplace_hessians,laplace_map_models_per_state,laplace_map_log_posteriors = [],[],[]
             lml = []
             for state in range(self.nstates):
                 fun = lambda x: log_posterior(x, state, *log_posterior_args)
@@ -1477,8 +1477,8 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
                     map_model = np.array(map_models[state])
                 dfun = nd.Hessian(fun)
                 laplace_hessians.append(dfun(map_model))
-                map_models_per_state.append(map_model)
-                map_log_posteriors.append(fun(map_model))
+                laplace_map_models_per_state.append(map_model)
+                laplace_map_log_posteriors.append(fun(map_model))
                 
                 p1 = ((self.ndims[state]/2.)*np.log(2*np.pi))
                 p3 = fun(map_model)
@@ -1493,6 +1493,9 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
 
                 lml.append(p1+p2+p3)
         
+        self.laplace_map_log_posteriors = laplace_map_log_posteriors
+        self.laplace_map_models_per_state = laplace_map_models_per_state
+        self.laplace_hessians = laplace_hessians
         self.log_marginal_likelihoods_laplace = lml
             
     def get_visits_to_states(  # calculate evolution of relative visits to each state along chain
