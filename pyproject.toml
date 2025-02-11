@@ -8,9 +8,12 @@ version = "0.1.0"
 requires-python = ">=3.9"
 dependencies = [
     "numpy",
+    "scipy",
     "matplotlib",
     "tqdm",
     "emcee",
     "numdifftools",
-    "scikit-learn"
+    "scikit-learn",
+    "tdqm",
+    "corner"
 ]
