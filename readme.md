@@ -13,7 +13,7 @@ This repository contains source code to implement three Trans-Conceptual MCMC sa
 ## Installation
 
 ```
-pip install git+https://github.com/msambridge/pyTransC
+pip install git+https://github.com/inlab-geo/pyTransC
 ```
 ## Documentation
 
@@ -33,7 +33,7 @@ Other utility functions include:
 
 `get_transc_samples()` - creates posterior TransC/TransD ensemble from results of any sample.
 
-Here is the docstring of the function `run_ensemble_resampler ()`:
+Here is the docstring of the function `run_ensemble_resampler()`:
 
        """
         MCMC sampler over independent states using a Markov Chain.
