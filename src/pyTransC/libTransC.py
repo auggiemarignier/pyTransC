@@ -25,7 +25,15 @@ import scipy.stats as stats
 from scipy.optimize import minimize
 import numdifftools as nd
 
-multiprocessing.set_start_method("fork")
+#multiprocessing.set_start_method("fork")
+
+if __name__ == '__main__':
+    multiprocessing.set_start_method("spawn")
+    def worker():
+        print("Worker process")
+    p = multiprocessing.Process(target=worker)
+    p.start()
+    p.join()
 
 os.environ["OMP_NUM_THREADS"] = (
     "1"  # turn off automatic parallelisation so that we can use emcee parallelization
