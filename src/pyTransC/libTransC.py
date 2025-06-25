@@ -58,7 +58,7 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
     Trans-C McMC sampler class.
 
     A class that is used to perform a Metropolis random walk across independent states.
-    Calculates relative Marginal Likelihoods/evidences between states and/or an ensemble of trans-D samples.
+    Calculates relative Marginal Likelihoods/evidences between states and/or an ensemble of trans-C samples.
     Each state may have arbitrary dimension, model parameter definition and Likelihood function.
 
     Five alternate algorithms are available:
@@ -637,7 +637,7 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
         **kwargs,
     ):
         """
-        MCMC sampler over independent states using emcee fixed dimension sampler over trans-D product space.
+        MCMC sampler over independent states using emcee fixed dimension sampler over trans-C product space.
 
         Inputs:
         nwalkers - int               : number of random walkers used by product_space sampler.
@@ -672,7 +672,7 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
         self.nwalkers = nwalkers
         self.nsteps = nsteps
         if progress:
-            print("\nRunning product space trans-D sampler")
+            print("\nRunning product space trans-C sampler")
             print("\nNumber of walkers               : ", self.nwalkers)
             print("Number of states being sampled  : ", self.nstates)
             print("Dimensions of each state        : ", self.ndims)
@@ -821,9 +821,9 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
         Attributes defined/updated:
         nsamples - int                                : list of number of samples in each state (calculated from input ensembles if provided).
         nwalkers - int                                : number of random walkers used by state jump sampler.
-        state_chain - nwalkers*nsteps*int             : list of states visited along the trans-D chain.
+        state_chain - nwalkers*nsteps*int             : list of states visited along the trans-C chain.
         state_chain_tot - nwalkers*nsteps*int         : array of cumulative number of visits to each state along the chains.
-        model_chain - floats                          : list of trans-D sample along chain.
+        model_chain - floats                          : list of trans-C sample along chain.
         alg - string                                  : string defining the sampler method used.
 
         Notes:
@@ -839,7 +839,7 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
         self.nwalkers = nwalkers
 
         if progress:
-            print("\nRunning state-jump trans-D sampler")
+            print("\nRunning state-jump trans-C sampler")
             print("\nNumber of walkers               : ", self.nwalkers)
             print("Number of states being sampled  : ", self.nstates)
             print("Dimensions of each state        : ", self.ndims)
@@ -1084,7 +1084,7 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
         Attributes defined/updated:
         nstates - int                                 : number of independent states (calculated from input ensembles if provided).
         nsamples - int                                : list of number of samples in each state (calculated from input ensembles if provided).
-        state_chain_tot - nsamples*int                : array of states visited along the trans-D chain.
+        state_chain_tot - nsamples*int                : array of states visited along the trans-C chain.
         alg - string                                  : string defining the sampler method used.
 
 
@@ -1125,7 +1125,7 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
 
         self.nwalkers = nwalkers
         self.nsteps = nsteps
-        print("\nRunning ensemble trans-D resampler")
+        print("\nRunning ensemble resampler")
         print("\nNumber of walkers               : ", self.nwalkers)
         print("Number of states being sampled  : ", self.nstates)
         print("Dimensions of each state        : ", self.ndims)
@@ -1680,15 +1680,15 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
         ensemble_per_state=None,
         flat=False,
         verbose=False,
-    ):  # generate a trans-d ensemble from either TransC-ens or TransC-ps samplers
+    ):  # generate a trans-c ensemble from either TransC-ens or TransC-ps samplers
         """
         Utility routine to retrieve list of trans-C model space samples, previously calculated by
         either run_is_ensemble_resampler(),run_product_space_sampler() or run_ens_mcint() or run_state_jump_sampler.
-        For algorithms TransC-ensemble-resampler and TransC-integration the input variable 'ntd_samples' determines the number of trans-D model space samples generated and then returned.
-        For algorithms TransC-product-space and TransC-state-jump-sampler the number of trans-D model space samples is determined by the original sampler and modified by chain thinning (see `discard` and `thin` parameters).
+        For algorithms TransC-ensemble-resampler and TransC-integration the input variable 'ntd_samples' determines the number of trans-C model space samples generated and then returned.
+        For algorithms TransC-product-space and TransC-state-jump-sampler the number of trans-C model space samples is determined by the original sampler and modified by chain thinning (see `discard` and `thin` parameters).
 
         Inputs:
-        ntd_samples - int           : number of trans-D samples to generate [for algs 'TransC-integration' or 'TransC-ensemble-resampler'].
+        ntd_samples - int           : number of trans-C samples to generate [for algs 'TransC-integration' or 'TransC-ensemble-resampler'].
         discard - int               : number of output samples to discard, also known as `burnin' (default = 0)) [only relevant if algs = 'TransC-product-space' or 'TransC-state-jump-sampler'].
         thin - int                  : frequency of output samples in output chains to accept (default = 1, i.e. all) [only relevant if algs = 'TransC-product-space' or 'TransC-state-jump-sampler'].
         returnchains - bool         : switch to return states of each trans_d sample returned. (Default = False)
@@ -1696,21 +1696,21 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
 
 
         Returns:
-        transd_ensemble - list      : list of trans-D samples ordered by state.
+        transd_ensemble - list      : list of trans-C samples ordered by state.
                                       if flat=True, format is [state,i],i=1,...,n(state); where n(state) is the number of models generated in state i.
                                       otherwise format is [state,walker,i], where samples are also separated by their walker.
                                       if alg is `TransC-product-space` or `TransC-state-jump-sampler` size of ensemble returned depends on values of discard and flat.
                                       if alg is `TransC-ensemble-resampler` or `TransC-integration`,  size of ensemble returned is given by ntd_samples.
-        model_chain - floats        : list of trans-D samples. For ensemble generated by `run_product_space_sampler`, number determined by
+        model_chain - floats        : list of trans-C samples. For ensemble generated by `run_product_space_sampler`, number determined by
                                       discard and thin (only if returnchains = True).
-        states_chain - ints. : list of states of trans-D samples (only if returnchains = True).
+        states_chain - ints. : list of states of trans-C samples (only if returnchains = True).
 
         """
         # if(not hasattr(self, 'relative_marginal_likelihoods')): # need to call get_visits_to_states for marginal Likelihoods
 
         if (
             self.alg == "TransC-ensemble-resampler" or self.alg == "TransC-integration"
-        ):  # draw random trans-D models according to relative marginals for TransC-ens resampler
+        ):  # draw random trans-C models according to relative marginals for TransC-ens resampler
 
             if hasattr(
                 self, "ensemble_per_state"
@@ -1727,7 +1727,7 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
 
             if verbose:
                 print(
-                    "\n Generating trans-dimensional ensemble of size ",
+                    "\n Generating trans-state ensemble of size ",
                     ntd_samples,
                     " using algorithm: ",
                     self.alg,
@@ -1757,7 +1757,7 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
 
         elif (
             self.alg == "TransC-product-space"
-        ):  # build trans-D model ensemble from product space chains for TransC-ps resampler
+        ):  # build trans-C model ensemble from product space chains for TransC resampler
 
             samples = self.productspace_sampler.get_chain(
                 discard=discard, thin=thin, flat=flat
@@ -1813,7 +1813,7 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
 
         elif (
             self.alg == "TransC-state-jump-sampler"
-        ):  # build trans-D model ensemble from product space chains for TransC-state-jump-sampler
+        ):  # build trans-C model ensemble from product space chains for TransC-state-jump-sampler
 
             model_chain = [
                 row[discard::thin] for row in self.model_chain
@@ -1846,10 +1846,10 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
         one per state. This routine is the inverse operation to routine '_modelvectors2productspace()'
 
         Inputs:
-        x - float array or list : trans-D vectors in product space format. (length sum ndim[i], i=1,...,nstates)
+        x - float array or list : trans-C vectors in product space format. (length sum ndim[i], i=1,...,nstates)
 
         Returns:
-        m - list of floats      : list of trans-D vectors one per state with format
+        m - list of floats      : list of trans-C vectors one per state with format
                                   m[i][v[i]], (i=1,...,nstates) where i is the state and v[i] is a model vector in state i.
 
         """
@@ -1868,13 +1868,13 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
         This routine is the inverse operation to routine '_productspacevector2model()' but over multiple walkers.
 
         Inputs:
-        m - list of floats arrays      : list of trans-D vectors one per state with format
+        m - list of floats arrays      : list of trans-C vectors one per state with format
                                           m[i][v[i]], (i=1,...,nstates) where i is the state and v[i] is a vector in state i.
         states - nwalkers*int          : list of states for each walker/chain.
         nwalkers - int                 : number of walkers.
 
         Returns:
-        x - float array or list : trans-D vectors in product space format. (length = nwalkers*(1 + sum ndim[i], i=1,...,nstates))
+        x - float array or list : trans-C vectors in product space format. (length = nwalkers*(1 + sum ndim[i], i=1,...,nstates))
 
         """
         x = np.zeros((nwalkers, self.ps_ndim + 1))
@@ -1897,7 +1897,7 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
         here input vector is in product space format.
 
         Inputs:
-        x - float array or list : trans-D vectors in product space format. (length = nwalkers*(1 + sum ndim[i], i=1,...,nstates))
+        x - float array or list : trans-C vectors in product space format. (length = nwalkers*(1 + sum ndim[i], i=1,...,nstates))
         log_posterior()              : user supplied function to evaluate the log-posterior density for the ith state at location x.
                                        calling sequence log_posterior(x,i,*log_posterior_args)
         log_pseudo_prior()           : user supplied function to evaluate the log-pseudo-prior density for the ith state at location x.
@@ -1908,7 +1908,7 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
 
 
         Returns:
-        x - float array or list : trans-D vectors in product space format. (length sum ndim[i], i=1,...,nstates)
+        x - float array or list : trans-C vectors in product space format. (length sum ndim[i], i=1,...,nstates)
 
         """
         if x[0] < -0.5 or x[0] >= self.nstates - 0.5:
