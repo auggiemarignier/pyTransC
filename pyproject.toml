@@ -10,6 +10,7 @@ authors = [
 ]
 requires-python = ">=3.9"
 dependencies = [
+    "arviz>=0.16.0",
     "corner>=2.2.3",
     "emcee>=3.1.6",
     "matplotlib>=3.9.4",
@@ -48,7 +49,6 @@ select = [
     "SIM212",  # Use {a} if {a} else {b} instead of {b} if not {a} else {a}
     "SIM300",  # Yoda conditions. Use 'age == 42' instead of '42 == age'.
     "SIM401",  # Use get from dict with default instead of an if block
-    "T20",     # flake8-print
     "TRY004",  # Prefer TypeError exception for invalid type
     "RUF006",  # Store a reference to the return value of asyncio.create_task
     "UP",      # pyupgrade
@@ -60,6 +60,7 @@ ignore = [
     "D202",  # No blank lines allowed after function docstring
     "D203",  # 1 blank line required before class docstring
     "D213",  # Multi-line docstring summary should start at the second line
+    "D401",  # First line should be in imperative mood
     "D404",  # First word of the docstring should not be This
     "D406",  # Section name should end with a newline
     "D407",  # Section name underlining

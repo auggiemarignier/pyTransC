@@ -1,36 +1,36 @@
-# -*- coding: utf-8 -*-
 """
-    Trans conceptual McMC sampler class. 
-    
-    A class that is used to perform a Metropolis random walk across a Trans-C model comprising of independent states.
-    Calculates relative Marginal Likelihoods/evidences between states and/or an ensemble of Trans-C samples.
-    Each state may have arbitrary dimension, model parameter definition and Likelihood function.
-    
-    For a description of Trans-C and its relation to Trans-D sampling see 
-    
-    https://essopenarchive.org/users/841079/articles/1231492-trans-conceptual-sampling-bayesian-inference-with-competing-assumptions
+Trans conceptual McMC sampler class.
+
+A class that is used to perform a Metropolis random walk across a Trans-C model comprising of independent states.
+Calculates relative Marginal Likelihoods/evidences between states and/or an ensemble of Trans-C samples.
+Each state may have arbitrary dimension, model parameter definition and Likelihood function.
+
+For a description of Trans-C and its relation to Trans-D sampling see
+
+https://essopenarchive.org/users/841079/articles/1231492-trans-conceptual-sampling-bayesian-inference-with-competing-assumptions
 """
-#!/usr/bin/python
-# -*- coding: utf-8 -*-
-from sklearn.mixture import GaussianMixture
-import emcee
-import random
-import numpy as np
-from tqdm import tqdm
+
 import multiprocessing
-import warnings
 import os
+import random
+import warnings
 from functools import partial
+
+import emcee
+import numdifftools as nd
+import numpy as np
 import scipy.stats as stats
 from scipy.optimize import minimize
-import numdifftools as nd
+from sklearn.mixture import GaussianMixture
+from tqdm import tqdm
 
-#multiprocessing.set_start_method("fork")
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     multiprocessing.set_start_method("spawn")
+
     def worker():
+        """Worker function to test multiprocessing setup."""
         print("Worker process")
+
     p = multiprocessing.Process(target=worker)
     p.start()
     p.join()
@@ -41,19 +41,19 @@ os.environ["OMP_NUM_THREADS"] = (
 
 
 class Error(Exception):
-    """Base class for other exceptions"""
+    """Base class for other exceptions."""
 
     pass
 
 
 class Inputerror(Exception):
-    """Raised when necessary inputs are missing"""
+    """Raised when necessary inputs are missing."""
 
     def __init__(self, msg=""):
         super().__init__(msg)
 
 
-class TransC_Sampler(object):  # Independent state MCMC parameter class
+class TransC_Sampler:  # Independent state MCMC parameter class
     """
     Trans-C McMC sampler class.
 
@@ -148,6 +148,7 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
     ):
         """
         Utility routine to run an MCMC sampler independently within each state.
+
         Creates a set of ensembles of posterior samples for each state.
         Makes use of emcee sampler for posterior sampling.
 
@@ -189,19 +190,19 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
         """
 
         random.seed(seed)
-        if type(nwalkers) != list:
+        if not isinstance(nwalkers, list):
             nwalkers = [nwalkers for i in range(self.nstates)]
-        if type(discard) != list:
+        if not isinstance(discard, list):
             discard = [discard for i in range(self.nstates)]
-        if type(thin) != list:
+        if not isinstance(thin, list):
             thin = [thin for i in range(self.nstates)]
-        if type(nsteps) != list:
+        if not isinstance(nsteps, list):
             nsteps = [nsteps for i in range(self.nstates)]
         if autothin:
             thin = [
                 1 for i in range(self.nstates)
             ]  # ignore thining factor because we are post thining by the auto-correlation times
-        if type(parallel) == bool:
+        if isinstance(parallel, bool):
             parallel = [parallel for i in range(self.nstates)]
 
         self.nwalkers_per_state = nwalkers
@@ -216,7 +217,6 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
             print("Dimensions of each state: ", self.ndims)
 
         for i in range(self.nstates):  # loop over states
-
             logfunc = partial(
                 self._myfunc, log_posterior=log_posterior, args=[i, *log_posterior_args]
             )
@@ -298,7 +298,7 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
     def auto_thin_chains(
         self, samples, log_posterior_ens, verbose=False
     ):  # thin the chains using the maximum auto_correlation function for each state to get independent samples
-        """Function to calculate and thin provided samples and log_posterior valuesby their respective auto-correlation times"""
+        """Function to calculate and thin provided samples and log_posterior valuesby their respective auto-correlation times."""
         samples_auto, log_posterior_ens_auto, auto_correlation = [], [], []
         for i in range(self.nstates):
             if verbose:
@@ -320,7 +320,7 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
         return samples_auto, log_posterior_ens_auto
 
     def _myfunc(self, x, log_posterior, args):
-        """Utility function as internal interface to log_posterior()"""
+        """Utility function as internal interface to log_posterior()."""
         return log_posterior(x, *args)
 
     def run_fitmixture(  # fit a mixture of Gaussians to the ensembles of each state
@@ -333,6 +333,7 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
     ):
         """
         Utility routine to fit a Gaussian mixture model to input ensemble for an approximate posterior distribution within each state.
+
         Makes use of sklearn.mixture.GaussianMixture to fit a mixture model.
         Mixture model is available internally for use by function 'run_ens_mcint()' to act as the pseudo prior in each state.
 
@@ -420,7 +421,6 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
             def log_pseudo_prior(
                 x, state, returndeviate=False
             ):  # multi-state log pseudo-prior density and deviate generator
-
                 gmm = self.gm_pseudo_func[
                     state
                 ]  # get mixture model approximation for this state
@@ -428,7 +428,7 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
                     dev = gmm.sample()[0]
                     logppx = gmm.score(dev)
                     dev = dev[0]
-                    if type(dev) != np.ndarray:
+                    if not isinstance(dev, np.ndarray):
                         dev = np.array(
                             [dev]
                         )  # deal with 1D case which returns a scalar
@@ -461,8 +461,8 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
         **kwargs,  # Arguments for sklearn.mixture.GaussianMixture
     ):
         """
-        Utility routine to build an automatic pseudo_prior function using a
-        Gaussian mixture model approximation of posterior from small ensemble.
+        Utility routine to build an automatic pseudo_prior function using a Gaussian mixture model approximation of posterior from small ensemble.
+
         This is intentionally a simple implementation of an automatic pseudo-prior approximation.
         This could serve as a template for building a more sophisticated approximation.
 
@@ -498,9 +498,9 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
                              dev is a random deviate drawn from the pseudo-prior.
 
         """
-        if type(nwalkers) != list:
+        if not isinstance(nwalkers, list):
             nwalkers = [nwalkers for i in range(self.nstates)]
-        if type(nsamples) != list:
+        if not isinstance(nsamples, list):
             nsamples = [nsamples for i in range(self.nstates)]
 
         if (ensemble_per_state is None) and (log_posterior_ens is not None):
@@ -513,7 +513,7 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
                 msg=" In function build_auto_pseudo_prior: Ensemble co-ordinates provided as argument without ensemble probabilities"
             )
 
-        if type(ensemble_per_state) == list and type(log_posterior_ens) == list:
+        if isinstance(ensemble_per_state, list) and isinstance(log_posterior_ens, list):
             print("We are using input ensembles")
 
             self.ensemble_per_state = (
@@ -557,8 +557,9 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
             def log_pseudo_prior(
                 x, state, size=1, returndeviate=False
             ):  # multi-state log pseudo-prior density and deviate generator
-
-                rv = self.rvlist[state][
+                rv = self.rvlist[
+                    state
+                ][
                     2
                 ]  # get frozen stats.multivariate_normal object with correct mean and covariance
                 if returndeviate:
@@ -580,7 +581,6 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
             def log_pseudo_prior(
                 x, state, returndeviate=False, axisdeviate=False
             ):  # multi-state log pseudo-prior density and deviate generator
-
                 gmm = self.gm_pseudo_func[
                     state
                 ]  # get mixture model approximation for this state
@@ -592,7 +592,7 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
                     dev = gmm.sample()[0]
                     logppx = gmm.score(dev)
                     dev = dev[0]
-                    if type(dev) != np.ndarray:
+                    if not isinstance(dev, np.ndarray):
                         dev = np.array(
                             [dev]
                         )  # deal with 1D case which returns a scalar
@@ -703,9 +703,7 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
                     multiprocessing.cpu_count()
                 )  # set number of processors equal to those available
 
-            if (
-                mypool
-            ):  # try to run emcee myself on separate cores (doesn't make sense for emcee to do this as nwalkers > 2*ndim for performance)
+            if mypool:  # try to run emcee myself on separate cores (doesn't make sense for emcee to do this as nwalkers > 2*ndim for performance)
                 chunksize = int(
                     np.ceil(nwalkers / nprocessors)
                 )  # set work per0 processor
@@ -731,7 +729,6 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
                 return result
 
             else:  # use emcee in parallel
-
                 with multiprocessing.Pool() as pool:
                     sampler = emcee.EnsembleSampler(  # instantiate emcee class
                         nwalkers, ndim_ps, logfunc, pool=pool, **kwargs
@@ -740,7 +737,6 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
                     sampler.run_mcmc(pos_ps, nsteps, progress=progress)  # run sampler
 
         else:
-
             sampler = emcee.EnsembleSampler(  # instantiate emcee class
                 nwalkers, ndim_ps, logfunc, **kwargs
             )
@@ -757,7 +753,6 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
         self.nprocessors = nprocessors
 
     def _myemcee(self, pos, nsteps, logfunc, ndim, progress, kwargs):
-
         # print(' pos',pos)
         # print(' nsteps',nsteps)
         sampler = emcee.EnsembleSampler(  # instantiate emcee class with a single walker
@@ -789,7 +784,6 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
         verbose=False,
     ):
         """
-
         MCMC sampler over independent states using a Metropolis-Hastings algorithm and proposal equal to the supplied pseudo-prior function.
 
         Calculates Markov chain across states for state jump sampler
@@ -861,7 +855,6 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
         prop_between = np.zeros(nwalkers)
 
         if parallel:  # put random walkers on different processors
-
             if nprocessors == 1:
                 nprocessors = (
                     multiprocessing.cpu_count()
@@ -964,7 +957,6 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
         prob_state,
         verbose,
     ):
-
         cstate, cmodel = cstate_cmodel
         visits = np.zeros(self.nstates, dtype=int)
         lpostc = log_posterior(
@@ -979,10 +971,8 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
         prop_between, prop_within, accept_within, accept_between = 0, 0, 0, 0
 
         for chainstep in range(nsteps):  # loop over markov chain steps
-
             if random.random() < prob_state:  # Choose to propose a new state
-
-                states = [j for j in range(self.nstates)]  # list of all states
+                states = list(range(self.nstates))  # list of all states
                 states.remove(cstate)  # list of available states
                 pstate = random.choice(states)  # choose proposed state
                 if verbose:
@@ -996,7 +986,6 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
                 logpert = lpseudoc - lpseudop  # log difference in pseduo-priors
 
             else:  # Choose to propose a new model within current state
-
                 pstate = np.copy(cstate)  # retain current state
                 if verbose:
                     print("within state", cstate, " model change")
@@ -1097,7 +1086,6 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
         if (
             not self.run_fit
         ):  # mixture fitting has not been performed and so we need input ensembles
-
             if (log_pseudo_prior_ens is None) and (log_posterior_ens is not None):
                 raise Inputerror(
                     msg=" In function run_is_ensemble_resampler: Ensemble probabilities provided as argument without pseudo-prior probabilities"
@@ -1135,7 +1123,6 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
         state_chain = np.zeros((nwalkers, nsteps), dtype=int)
         accept_between = np.zeros(nwalkers, dtype=int)
         if parallel:
-
             if nprocessors == 1:
                 nprocessors = (
                     multiprocessing.cpu_count()
@@ -1172,7 +1159,6 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
 
             pass
         else:
-
             for walker in self._myrange(progress, nwalkers):
                 cstate = random.choice(
                     range(self.nstates)
@@ -1205,7 +1191,7 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
         stateproposalweights=None,
         verbose=False,
     ):
-        """Internal one chain MCMC sampler used by run_ensemble_resampler()"""
+        """Internal one chain MCMC sampler used by run_ensemble_resampler()."""
 
         visits = np.zeros(self.nstates)
         state_chain_tot = np.zeros((nsteps, self.nstates), dtype=int)
@@ -1226,8 +1212,7 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
             )  # set row sums to unity
 
         for chainstep in range(nsteps - 1):  # loop over markov chain steps
-
-            states = [j for j in range(self.nstates)]  # list of all states
+            states = list(range(self.nstates))  # list of all states
             states.remove(cstate)  # list of available states
             # weights = stateweights[np.ix_(np.delete(np.arange(self.nstates),cstate),np.delete(np.arange(self.nstates),cstate))]
             weights = stateproposalweights[
@@ -1242,7 +1227,6 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
             if (log_pseudo_prior_ens is not None) and (
                 log_posterior_ens is not None
             ):  # use provided pseudo-priors
-
                 lpseudoc = log_pseudo_prior_ens[cstate][
                     cmember
                 ]  # log pseudo-prior for current state
@@ -1257,7 +1241,6 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
                 ]  # log posterior for proposed state
 
             elif self.run_fit:  # use internally calculated pseudo-priors
-
                 lpseudoc = self.log_pseudo_prior_ens[cstate][
                     cmember
                 ]  # log pseudo-prior for current state
@@ -1285,7 +1268,6 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
                 cmember = np.copy(pmember)
                 accept += 1
             else:
-
                 # Reject move between states
 
                 visits[cstate] += 1
@@ -1329,10 +1311,7 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
 
         """
 
-        if (
-            not self.run_fit
-        ):  # mixture fitting has not been performed and so we need input ensembles, so check that we have them
-
+        if not self.run_fit:  # mixture fitting has not been performed and so we need input ensembles, so check that we have them
             if (log_pseudo_prior_ens is None) and (log_posterior_ens is not None):
                 raise Inputerror(
                     msg=" In function run_ens_mcint: Ensemble probabilities provided as argument without pseudo-prior probabilities"
@@ -1448,7 +1427,7 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
             )
 
         if (
-            type(ensemble_per_state) == list and type(log_posterior_ens) == list
+            isinstance(ensemble_per_state, list) and isinstance(log_posterior_ens, list)
         ):  # we use input ensemble
             if verbose:
                 print(
@@ -1544,6 +1523,7 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
     ):
         """
         Utility routine to retrieve proportion of visits to each state as a function of chain step, i.e. calculates the relative evidence/marginal Liklihoods of states.
+
         Collects information from previously run sampler. Can be used to diagnose performance and convergence.
 
         Inputs:
@@ -1574,7 +1554,6 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
         if (
             self.alg == "TransC-product-space"
         ):  # calculate fraction of visits to each state along chain averaged over walkers
-
             samples = self.productspace_sampler.get_chain(
                 discard=discard, thin=thin
             )  # collect model ensemble
@@ -1586,7 +1565,7 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
                 visits[:, :, i] = np.cumsum(self.state_chain == i, axis=0)
             self.state_chain_tot = visits
             if normalize:
-                for i in range(self.nstates):
+                for _ in range(self.nstates):
                     visits /= np.sum(visits, axis=2)[:, :, np.newaxis]
             out = visits
             if flat and walker_average == "mean":
@@ -1623,12 +1602,11 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
         ):  # generate samples over states with calculated evidences as weights
             if ntd_samples is None:
                 ntd_samples = len(self.ens_mc_samples[0])
-            samples = np.random.choice(
+            samples = np.random.default_rng().choice(
                 self.nstates, ntd_samples, p=self.relative_marginal_likelihoods
             )
             return samples
         else:
-
             visits = self.state_chain_tot[discard::thin, :, :].astype("float")
             if normalize:
                 visits /= np.sum(visits, axis=2)[:, :, np.newaxis]
@@ -1682,8 +1660,8 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
         verbose=False,
     ):  # generate a trans-c ensemble from either TransC-ens or TransC-ps samplers
         """
-        Utility routine to retrieve list of trans-C model space samples, previously calculated by
-        either run_is_ensemble_resampler(),run_product_space_sampler() or run_ens_mcint() or run_state_jump_sampler.
+        Utility routine to retrieve list of trans-C model space samples, previously calculated by either run_is_ensemble_resampler(),run_product_space_sampler() or run_ens_mcint() or run_state_jump_sampler.
+
         For algorithms TransC-ensemble-resampler and TransC-integration the input variable 'ntd_samples' determines the number of trans-C model space samples generated and then returned.
         For algorithms TransC-product-space and TransC-state-jump-sampler the number of trans-C model space samples is determined by the original sampler and modified by chain thinning (see `discard` and `thin` parameters).
 
@@ -1708,10 +1686,10 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
         """
         # if(not hasattr(self, 'relative_marginal_likelihoods')): # need to call get_visits_to_states for marginal Likelihoods
 
+        rng = np.random.default_rng()
         if (
             self.alg == "TransC-ensemble-resampler" or self.alg == "TransC-integration"
         ):  # draw random trans-C models according to relative marginals for TransC-ens resampler
-
             if hasattr(
                 self, "ensemble_per_state"
             ):  # we have an internally calculated ensemble per state
@@ -1737,7 +1715,7 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
             # if(self.alg == 'TransC-integration'):
             # states_chain = self.get_visits_to_states(normalize=True,flat=True)
 
-            states_chain = np.random.choice(
+            states_chain = rng.choice(
                 self.nstates, size=ntd_samples, p=self.relative_marginal_likelihoods
             )
 
@@ -1745,12 +1723,10 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
             for i in range(
                 ntd_samples
             ):  # randomly select models from input state ensembles using evidence weights
-                j = np.random.choice(self.nsamples[states_chain[i]])
+                j = rng.choice(self.nsamples[states_chain[i]])
                 model_chain[i] = ensemble_per_state[states_chain[i]][j]
 
-            transd_ensemble = (
-                []
-            )  # create transd ensemble of models ordered by states for a single walker
+            transd_ensemble = []  # create transd ensemble of models ordered by states for a single walker
             for i in range(self.nstates):
                 ind = [num for num, n in enumerate(states_chain) if n == i]
                 transd_ensemble.append(np.array([model_chain[j] for j in ind]))
@@ -1758,7 +1734,6 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
         elif (
             self.alg == "TransC-product-space"
         ):  # build trans-C model ensemble from product space chains for TransC resampler
-
             samples = self.productspace_sampler.get_chain(
                 discard=discard, thin=thin, flat=flat
             )  # collect model ensemble
@@ -1814,7 +1789,6 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
         elif (
             self.alg == "TransC-state-jump-sampler"
         ):  # build trans-C model ensemble from product space chains for TransC-state-jump-sampler
-
             model_chain = [
                 row[discard::thin] for row in self.model_chain
             ]  # stride the list
@@ -1842,8 +1816,9 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
         self, x
     ):  # convert a combined product space model space vector to model vector in each state
         """
-        Internal utility routine to convert a single vector in product state format to a list of vectors of differing length
-        one per state. This routine is the inverse operation to routine '_modelvectors2productspace()'
+        Internal utility routine to convert a single vector in product state format to a list of vectors of differing length one per state.
+
+        This routine is the inverse operation to routine '_modelvectors2productspace()'
 
         Inputs:
         x - float array or list : trans-C vectors in product space format. (length sum ndim[i], i=1,...,nstates)
@@ -1865,6 +1840,7 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
     ):  # convert model space vectors in each state to product space vectors
         """
         Internal utility routine to convert a list of vectors of differing length one per state to a single vector in product state format.
+
         This routine is the inverse operation to routine '_productspacevector2model()' but over multiple walkers.
 
         Inputs:
@@ -1880,7 +1856,7 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
         x = np.zeros((nwalkers, self.ps_ndim + 1))
         for j in range(nwalkers):
             x[j, 0] = states[j]
-            x[j, 1:] = np.concatenate(([m[i][j] for i in range(self.nstates)]))
+            x[j, 1:] = np.concatenate([m[i][j] for i in range(self.nstates)])
         return x
 
     def _productspace_log_prob(
@@ -1892,8 +1868,8 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
         log_pseudo_prior_args,
     ):  # Calculate product space target PDF from posterior and pseudo-priors in each state
         """
-        Internal utility routine to calculate the combined target density for product space vector.
-        i.e. sum of log posterior + log pseudo prior density of all states
+        Internal utility routine to calculate the combined target density for product space vector i.e. sum of log posterior + log pseudo prior density of all states.
+
         here input vector is in product space format.
 
         Inputs:
@@ -1936,7 +1912,7 @@ class TransC_Sampler(object):  # Independent state MCMC parameter class
 
 
 def autocorr_gw2010(y, c=5.0):
-    """Auto correlation utility routine following Goodman & Weare (2010)"""
+    """Auto correlation utility routine following Goodman & Weare (2010)."""
     f = autocorr_func_1d(np.mean(y, axis=0))
     taus = 2.0 * np.cumsum(f) - 1.0
     window = auto_window(taus, c)
@@ -1944,7 +1920,8 @@ def autocorr_gw2010(y, c=5.0):
 
 
 def autocorr_fardal(y, c=5.0):
-    """Auto correlation utility routine for improved auto correlation time estimate as per emcee notes
+    """Auto correlation utility routine for improved auto correlation time estimate as per emcee notes.
+
     see https://emcee.readthedocs.io/en/stable/tutorials/autocorr/
     """
     f = np.zeros(y.shape[1])
@@ -1957,7 +1934,7 @@ def autocorr_fardal(y, c=5.0):
 
 
 def next_pow_two(n):
-    """Auto correlation utility routine following Goodman & Weare (2010)"""
+    """Auto correlation utility routine following Goodman & Weare (2010)."""
     i = 1
     while i < n:
         i = i << 1
@@ -1965,7 +1942,7 @@ def next_pow_two(n):
 
 
 def autocorr_func_1d(x, norm=True):
-    """Auto correlation utility routine following Goodman & Weare (2010)"""
+    """Auto correlation utility routine following Goodman & Weare (2010)."""
     x = np.atleast_1d(x)
     if len(x.shape) != 1:
         raise ValueError("invalid dimensions for 1D autocorrelation function")
@@ -1984,7 +1961,7 @@ def autocorr_func_1d(x, norm=True):
 
 
 def auto_window(taus, c):
-    """Auto correlation utility routine for Automated windowing procedure following Sokal (1989)"""
+    """Auto correlation utility routine for Automated windowing procedure following Sokal (1989)."""
     m = np.arange(len(taus)) < c * taus
     if np.any(m):
         return np.argmin(m)
