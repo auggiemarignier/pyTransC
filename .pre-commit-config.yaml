@@ -1,0 +1,66 @@
+---
+minimum_pre_commit_version: 1.21.0
+fail_fast: false
+default_stages: [ pre-commit ]
+repos:
+
+  # formatters
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.11.7
+    hooks:
+      # Run the linter.
+      - id: ruff
+        types_or: [ python, pyi, jupyter ]
+        args: [ --fix ]
+        pass_filenames: false
+      # Run the formatter.
+      - id: ruff-format
+
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.37.0
+    hooks:
+      - id: yamllint
+        args: [ "--strict", "-d", "{rules: {line-length: {max: 180}}}" ]
+        #
+
+  # miscellaneous
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-added-large-files
+      - id: check-docstring-first
+      - id: debug-statements
+      - id: check-json
+        exclude: .devcontainer/devcontainer.json
+      - id: check-yaml
+      - id: end-of-file-fixer
+        exclude: \.ipynb
+      - id: trailing-whitespace
+        exclude: \.ipynb
+      - id: check-ast
+      - id: check-builtin-literals
+      - id: detect-private-key
+      - id: mixed-line-ending
+      - id: no-commit-to-branch
+
+
+  - repo: https://github.com/pre-commit/pygrep-hooks
+    rev: v1.9.0
+    hooks:
+      - id: python-use-type-annotations
+      - id: python-no-log-warn
+      - id: python-no-eval
+      - id: python-check-mock-methods
+      - id: python-check-blanket-noqa
+
+  - repo: local
+    hooks:
+      - id: safety
+        name: safety
+        entry: safety
+        language: system
+        pass_filenames: false
+        args: [ "check", "--full-report", "--ignore", "51457"]
+        stages: [ pre-push ]

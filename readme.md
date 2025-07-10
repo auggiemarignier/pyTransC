@@ -1,4 +1,4 @@
-# pyTransC
+# pytransc
 
 ![Python3](https://img.shields.io/badge/python-3.x-brightgreen.svg)
 <a href="https://github.com/psf/black"><img alt="Code style: black" src="https://img.shields.io/badge/code%20style-black-000000.svg"></a>
@@ -13,7 +13,7 @@ This repository contains source code to implement three Trans-Conceptual MCMC sa
 ## Installation
 
 ```
-pip install git+https://github.com/inlab-geo/pyTransC
+pip install git+https://github.com/inlab-geo/pytransc
 ```
 ## Documentation
 
@@ -70,7 +70,7 @@ Here is the docstring of the function `run_ensemble_resampler()`:
 
 ```python
 import numpy as np
-from pyTransC import TransC_Sampler         # TransC library class
+from pytransc import TransC_Sampler         # TransC library class
 ```
 Detailed examples of showing implementation of all three samplers can be found in
 
@@ -79,7 +79,7 @@ Detailed examples of showing implementation of all three samplers can be found i
 [`examples/AirborneEM`](./examples/AirborneEM) - Ensemble Sampler applied to Airborne EM data.
 
 ## Licensing
-`pyTransC` is released as BSD-2-Clause licence.
+`pytransc` is released as BSD-2-Clause licence.
 
 ## Citations and Acknowledgments
 
