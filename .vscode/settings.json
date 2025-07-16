@@ -13,5 +13,15 @@
     "python.testing.unittestEnabled": false,
     "python.testing.pytestEnabled": true,
     "python.analysis.typeCheckingMode": "basic",
-    "ruff.organizeImports": true
+    "ruff.organizeImports": true,
+    "cSpell.words": [
+        "autocorr",
+        "burnin",
+        "fardal",
+        "mcint",
+        "ndarray",
+        "prob",
+        "resampler",
+        "transc"
+    ]
 }

@@ -12,17 +12,19 @@ https://essopenarchive.org/users/841079/articles/1231492-trans-conceptual-sampli
 
 import multiprocessing
 import os
-import random
-import warnings
-from functools import partial
 
-import emcee
-import numdifftools as nd
 import numpy as np
-import scipy.stats as stats
-from scipy.optimize import minimize
-from sklearn.mixture import GaussianMixture
-from tqdm import tqdm
+
+from .analysis.integration import run_ens_mcint
+from .analysis.laplace import run_laplace_evidence_approximation
+from .analysis.samples import get_transc_samples
+from .analysis.visits import get_visits_to_states
+from .exceptions import InputError
+from .samplers.ensemble_resampler import run_ensemble_resampler
+from .samplers.product_space import run_product_space_sampler
+from .samplers.state_jump import run_state_jump_sampler
+from .utils.auto_pseudo import build_auto_pseudo_prior
+from .utils.mixture import fit_mixture, log_pseudo_prior_from_mixtures
 
 if __name__ == "__main__":
     multiprocessing.set_start_method("spawn")
@@ -38,19 +40,6 @@ if __name__ == "__main__":
 os.environ["OMP_NUM_THREADS"] = (
     "1"  # turn off automatic parallelisation so that we can use emcee parallelization
 )
-
-
-class Error(Exception):
-    """Base class for other exceptions."""
-
-    pass
-
-
-class Inputerror(Exception):
-    """Raised when necessary inputs are missing."""
-
-    def __init__(self, msg=""):
-        super().__init__(msg)
 
 
 class TransC_Sampler:  # Independent state MCMC parameter class
@@ -147,181 +136,38 @@ class TransC_Sampler:  # Independent state MCMC parameter class
         **kwargs,
     ):
         """
-        Utility routine to run an MCMC sampler independently within each state.
+        Deprecated: use samplers.per_state.run_mcmc_per_state() instead.
 
-        Creates a set of ensembles of posterior samples for each state.
-        Makes use of emcee sampler for posterior sampling.
-
-        This function is for convenience only. Its creates an ensemble of posterior samples within each state which
-            - can serve as the input to run_ensemble_resampler()
-            - can be used to build an approximate normalized pseudo_prior with build_auto_pseudo_prior().
-        Alternatively, the user could supply their own ensembles in each state for these purposes,
-        or directly provide their on own log_pseudo_prior function as required.
-
-        Inputs:
-        nwalkers - int, or list     : number of random walkers used by emcee sampler.
-        nsteps - int                : number of steps required per walker.
-        pos - nwalkers*ndims*float  : list of starting points of markov chains in each state.
-        log_posterior - func        : user supplied function to evaluate the log-posterior density for the ith state at location x.
-                                      calling sequence log_posterior(x,i,*log_posterior_args)
-        log_posterior_args - list   : user defined list of additional arguments passed to log_posterior function (optional).
-        discard - int, or list      : number of output samples to discard (default = 0). (Parameter passed to emcee, also known as `burnin'.)
-        thin - int, or list         : frequency of output samples in output chains to accept (default = 1, i.e. all) (Parameter passed to emcee.)
-        autothin - bool             : if True, ignores input thin value and instead thins the chain by the maximum auto_correlation time estimated (default = False).
-        seed - int                  : random number seed
-        parallel - bool             : switch to make use of multiprocessing package to parallelize over walkers
-        nprocessors - int           : number of processors to distribute work across (if parallel=True, else ignored).
-                                      Default = multiprocessing.cpu_count() if parallel = True, else 1 if False.
-        progress - bool             : switch to report progress of emcee to standard out. (Parameter passed to emcee.)
-        kwargs - dict               : dictionary of optional control parameters passed to emcee package to determine sampling behaviour.
-
-        Returns:
-        log_posterior_ens - floats. : list of log-posterior densities of samples in each state, format [i][j],(i=1,...,nstates;j=1,..., nwalkers*nsamples).
-        ensemble_per_state - floats : list of posterior samples in each state, format [i][j][k],(i=1,...,nstates;j=1,..., nwalkers*nsamples;k=1,...,ndim[i]).
-
-
-        Attributes defined:
-        nwalkers - int              : number of random walkers per state
-        ensemble_per_state - floats : list of posterior samples in each state, format [i][j][k],(i=1,...,nstates;j=1,..., nwalkers*nsamples;k=1,...,ndim[i]).
-        nsamples - nstates*int      : list of number of samples in each state.
-        log_posterior_ens - floats. : list of log-posterior densities of samples in each state, format [i][j],(i=1,...,nstates;j=1,..., nwalkers*nsamples).
-        run_per_state - bool.       : bool to keep track of whether run_mcmc_per_state has been called.
-
+        Maintained for backwards compatibility with old code.
         """
+        from .samplers.per_state import run_mcmc_per_state
 
-        random.seed(seed)
-        if not isinstance(nwalkers, list):
-            nwalkers = [nwalkers for i in range(self.nstates)]
-        if not isinstance(discard, list):
-            discard = [discard for i in range(self.nstates)]
-        if not isinstance(thin, list):
-            thin = [thin for i in range(self.nstates)]
-        if not isinstance(nsteps, list):
-            nsteps = [nsteps for i in range(self.nstates)]
-        if autothin:
-            thin = [
-                1 for i in range(self.nstates)
-            ]  # ignore thining factor because we are post thining by the auto-correlation times
-        if isinstance(parallel, bool):
-            parallel = [parallel for i in range(self.nstates)]
+        samples_per_state, log_posterior_per_state = run_mcmc_per_state(
+            self.nstates,
+            self.ndims,
+            nwalkers,
+            nsteps,
+            pos,
+            log_posterior,
+            log_posterior_args=log_posterior_args,
+            discard=discard,
+            thin=thin,
+            auto_thin=autothin,
+            seed=seed,
+            parallel=parallel,
+            n_processors=nprocessors,
+            progress=progress,
+            skip_initial_state_check=skip_initial_state_check,
+            io=io,
+            verbose=verbose,
+            **kwargs,
+        )
+        self.ensemble_per_state = samples_per_state
+        self.log_posterior_ens = log_posterior_per_state
+        self.run_per_state = True  # set flag to indicate work done
+        self.nsamples = [len(samples) for samples in samples_per_state]
 
-        self.nwalkers_per_state = nwalkers
-        self.autothin = autothin
-        samplers = []
-
-        (samples, log_posterior_ens, auto_correlation) = ([], [], [])
-        if progress:
-            print("\nRunning within-state sampler separately on each state")
-            print("\nNumber of walkers               : ", self.nwalkers_per_state)
-            print("\nNumber of states being sampled: ", self.nstates)
-            print("Dimensions of each state: ", self.ndims)
-
-        for i in range(self.nstates):  # loop over states
-            logfunc = partial(
-                self._myfunc, log_posterior=log_posterior, args=[i, *log_posterior_args]
-            )
-            if parallel[i]:
-                if nprocessors == 1:
-                    nprocessors = (
-                        multiprocessing.cpu_count()
-                    )  # set number of processors
-
-                with multiprocessing.Pool(processes=nprocessors) as pool:
-                    sampler = emcee.EnsembleSampler(  # instantiate emcee class
-                        nwalkers[i], self.ndims[i], logfunc, pool=pool, **kwargs
-                    )
-                    sampler.run_mcmc(
-                        pos[i],
-                        nsteps[i],
-                        progress=progress,
-                        skip_initial_state_check=skip_initial_state_check,
-                    )  # run sampler
-            else:
-                sampler = emcee.EnsembleSampler(
-                    nwalkers[i], self.ndims[i], logfunc, **kwargs
-                )
-                sampler.run_mcmc(
-                    pos[i],
-                    nsteps[i],
-                    progress=progress,
-                    skip_initial_state_check=skip_initial_state_check,
-                )  # run sampler in current state
-            samples.append(
-                sampler.get_chain(discard=discard[i], thin=thin[i], flat=True)
-            )  # collect state ensemble
-            log_posterior_ens.append(
-                sampler.get_log_prob(discard=discard[i], thin=thin[i], flat=True)
-            )  # collect state log_posterior values
-
-            if autothin:
-                if verbose:
-                    print("Performing auto thinning of ensemble...")
-                auto_correlation.append([sampler.get_autocorr_time(tol=0)])
-                if verbose:
-                    print(
-                        "Auto thinning factor calculated = ",
-                        int(np.ceil(np.max(auto_correlation[i]))),
-                    )
-            samplers.append(sampler)
-
-        self.nprocessors = nprocessors
-
-        if autothin:
-            # we now thin the chains using the maximum auto_correlation function for each state to get independent samples for fitting
-            # emcee manual suggests tau = sampler.get_autocorr_time(); burnin = int(2 * np.max(tau)); thin = int(0.5 * np.min(tau))
-            samples_auto, log_posterior_ens_auto = [], []
-            for i in range(self.nstates):
-                # thin = int(np.ceil(np.max(auto_correlation[i])))
-                thin = int(
-                    np.ceil(0.5 * np.min(auto_correlation[i]))
-                )  # use emcee suggestion
-                burnin = int(
-                    np.ceil(2.0 * np.max(auto_correlation[i]))
-                )  # use emcee suggestion
-                samples_auto.append(samples[i][burnin::thin])
-                log_posterior_ens_auto.append(log_posterior_ens[i][burnin::thin])
-            samples = samples_auto
-            log_posterior_ens = log_posterior_ens_auto
-            self.autocorr_times_within_each_state = auto_correlation
-
-        self.ensemble_per_state = samples
-        self.log_posterior_ens = log_posterior_ens
-        self.run_per_state = True
-        self.samplers = samplers
-        s = []
-        for i in range(self.nstates):
-            s.append(len(samples[i]))
-        self.nsamples = s  # record number of models in each ensemble
-
-        return samples, log_posterior_ens
-
-    def auto_thin_chains(
-        self, samples, log_posterior_ens, verbose=False
-    ):  # thin the chains using the maximum auto_correlation function for each state to get independent samples
-        """Function to calculate and thin provided samples and log_posterior valuesby their respective auto-correlation times."""
-        samples_auto, log_posterior_ens_auto, auto_correlation = [], [], []
-        for i in range(self.nstates):
-            if verbose:
-                print("Performing auto thinning of ensemble...")
-            auto_correlation.append(self.samplers[i].get_autocorr_time(tol=0))
-            thin = int(np.ceil(np.max(auto_correlation[i])))
-            thin = int(
-                np.ceil(0.5 * np.min(auto_correlation[i]))
-            )  # use emcee suggestion
-            burnin = int(
-                np.ceil(2.0 * np.max(auto_correlation[i]))
-            )  # use emcee suggestion
-            if verbose:
-                print("Auto thinning factor calculated = ", thin, " burnin ", burnin)
-            samples_auto.append(samples[i][burnin::thin])
-            log_posterior_ens_auto.append(log_posterior_ens[i][burnin::thin])
-        self.autocorr_times_within_each_state = auto_correlation
-
-        return samples_auto, log_posterior_ens_auto
-
-    def _myfunc(self, x, log_posterior, args):
-        """Utility function as internal interface to log_posterior()."""
-        return log_posterior(x, *args)
+        return samples_per_state, log_posterior_per_state
 
     def run_fitmixture(  # fit a mixture of Gaussians to the ensembles of each state
         self,
@@ -360,21 +206,6 @@ class TransC_Sampler:  # Independent state MCMC parameter class
         run_fit - bool                 : bool to keep track of whether run_fitmixture has been called.
 
         """
-
-        (gm, ncomp) = ([], [])
-
-        error = False  # check for errors in input shapes of arrays
-        if len(ensemble) != len(log_posterior_ens):
-            error = True
-        for i in range(self.nstates):
-            if len(ensemble[i]) != len(log_posterior_ens[i]):
-                error = True
-        if error:
-            raise Inputerror(
-                msg=" In function run_fitmixture: Inconsistent shape of inputs\n"
-                + "\n Input data for ensemble differs in shape for input data log_posterior_ens\n"
-            )
-
         if not self.run_per_state:  # if the input ensemble is external then store it
             self.ensemble_per_state = ensemble  # store input ensemble
             self.log_posterior_ens = log_posterior_ens  # store input ensemble
@@ -383,62 +214,18 @@ class TransC_Sampler:  # Independent state MCMC parameter class
                 nsamples.append(len(ensemble[state]))
             self.nsamples = nsamples
 
-        for state in range(self.nstates):  # calculate mixture model
-            gmstate = GaussianMixture(**kwargs).fit(self.ensemble_per_state[state])
-            gm.append(gmstate)
-            ncomp.append(gmstate.get_params()["n_components"])
-
-        self.gm = gm  # Gaussian Mixture model for each state
-        self.ncomp = ncomp  # number of mixture components in each state
-        self.run_fit = True  # set fag to indicate work done
-
-        if verbose:
-            for state in range(self.nstates):
-                print(
-                    "State : ",
-                    state,
-                    "\n means",
-                    self.gm[state].means_,
-                    " covariances ",
-                    self.gm[state].covariances_,
-                    " weights ",
-                    self.gm[state].weights_,
-                )
-                #
-        log_pseudo = []
-        for cstate in range(self.nstates):
-            log_pseudo.append(
-                self.gm[cstate].score_samples(self.ensemble_per_state[cstate])
-            )
-
-        self.log_pseudo_prior_ens = (
-            log_pseudo  # log pseudo prior values fit for all ensembles
+        self.gm = fit_mixture(
+            self.nstates,
+            self.ensemble_per_state,
+            self.log_posterior_ens,
+            verbose,
+            **kwargs,
         )
+        self.run_fit = True
 
-        if return_pseudo_prior_func:
-            self.gm_pseudo_func = self.gm
-
-            def log_pseudo_prior(
-                x, state, returndeviate=False
-            ):  # multi-state log pseudo-prior density and deviate generator
-                gmm = self.gm_pseudo_func[
-                    state
-                ]  # get mixture model approximation for this state
-                if returndeviate:
-                    dev = gmm.sample()[0]
-                    logppx = gmm.score(dev)
-                    dev = dev[0]
-                    if not isinstance(dev, np.ndarray):
-                        dev = np.array(
-                            [dev]
-                        )  # deal with 1D case which returns a scalar
-                    logppx = gmm.score([dev])
-                    return logppx, dev
-                return gmm.score([x])
-
-            return log_pseudo_prior, log_pseudo
-
-        return log_pseudo
+        return log_pseudo_prior_from_mixtures(
+            self.gm, ensemble, return_pseudo_prior_func
+        )
 
     def build_auto_pseudo_prior(
         self,
@@ -498,124 +285,31 @@ class TransC_Sampler:  # Independent state MCMC parameter class
                              dev is a random deviate drawn from the pseudo-prior.
 
         """
-        if not isinstance(nwalkers, list):
-            nwalkers = [nwalkers for i in range(self.nstates)]
-        if not isinstance(nsamples, list):
-            nsamples = [nsamples for i in range(self.nstates)]
+        if self.run_per_state and not forcesample:
+            print(" We are using previously generated samples for fitting pseudo-prior")
+            ensemble_per_state = self.ensemble_per_state
+            log_posterior_ens = self.log_posterior_ens
 
-        if (ensemble_per_state is None) and (log_posterior_ens is not None):
-            raise Inputerror(
-                msg=" In function build_auto_pseudo_prior: Ensemble probabilities provided as argument without ensemble co-ordinates"
-            )
-
-        if (ensemble_per_state is not None) and (log_posterior_ens is None):
-            raise Inputerror(
-                msg=" In function build_auto_pseudo_prior: Ensemble co-ordinates provided as argument without ensemble probabilities"
-            )
-
-        if isinstance(ensemble_per_state, list) and isinstance(log_posterior_ens, list):
-            print("We are using input ensembles")
-
-            self.ensemble_per_state = (
-                ensemble_per_state  # use provided samples for fitting
-            )
-            self.log_posterior_ens = log_posterior_ens
-
-        else:
-            if (
-                self.run_per_state and not forcesample
-            ):  # if we are not forced to do sampling and samples already exist then we use them for fitting
-                pass
-            else:  # generate samples for fitting
-                self.run_mcmc_per_state(
-                    nwalkers,  # int or list containing number of walkers for each state
-                    nsamples,  # number of chain steps per walker
-                    pos,  # starting positions for walkers in each state
-                    log_posterior,  # log Likelihood x log_prior
-                    discard=discard,  # number of initial samples to discard along chain
-                    thin=thin,  # frequency of chain samples retained
-                    autothin=autothin,  # automatic thining of output ensemble by estimated correlation times
-                    parallel=parallel,
-                    log_posterior_args=log_posterior_args,  # log posterior additional arguments (optional)
-                    verbose=verbose,
-                    progress=progress,
-                )  # show progress bar for each state
-
-        if fitmeancov:  # we fit ensemble with a simple mean and covariance
-            print(" We are fitting mean and covariance")
-            rvlist, log_pseudo = [], []
-            for state in range(len(self.ensemble_per_state)):
-                pseudo_covs_ = np.cov(self.ensemble_per_state[state].T)
-                pseudo_means_ = np.mean(self.ensemble_per_state[state].T, axis=1)
-                rv = stats.multivariate_normal(mean=pseudo_means_, cov=pseudo_covs_)
-                rvlist.append([pseudo_means_, pseudo_covs_, rv])
-                log_pseudo.append(rv.logpdf(self.ensemble_per_state[state]))
-            self.pseudo_fit_params = rvlist
-
-            self.rvlist = rvlist
-
-            def log_pseudo_prior(
-                x, state, size=1, returndeviate=False
-            ):  # multi-state log pseudo-prior density and deviate generator
-                rv = self.rvlist[
-                    state
-                ][
-                    2
-                ]  # get frozen stats.multivariate_normal object with correct mean and covariance
-                if returndeviate:
-                    x = rv.rvs(size=size)
-                    logpseudo = rv.logpdf(
-                        x
-                    )  # evaluate log prior ignoring dimension prior
-                    return logpseudo, x
-                return rv.logpdf(x)
-
-            # log_pseudo_prior = partial(log_pseudo_prior_full,rvlist=rvlist)
-
-        else:
-            log_pseudo = self.run_fitmixture(
-                self.ensemble_per_state, self.log_posterior_ens, **kwargs
-            )
-            self.gm_pseudo_func = self.gm
-
-            def log_pseudo_prior(
-                x, state, returndeviate=False, axisdeviate=False
-            ):  # multi-state log pseudo-prior density and deviate generator
-                gmm = self.gm_pseudo_func[
-                    state
-                ]  # get mixture model approximation for this state
-                if returndeviate:
-                    if (
-                        axisdeviate
-                    ):  # force deviate to single component along random axis
-                        return self._perturb(gmm, x)
-                    dev = gmm.sample()[0]
-                    logppx = gmm.score(dev)
-                    dev = dev[0]
-                    if not isinstance(dev, np.ndarray):
-                        dev = np.array(
-                            [dev]
-                        )  # deal with 1D case which returns a scalar
-                    logppx = gmm.score([dev])
-                    return logppx, dev
-
-                return gmm.score([x])
-
-        if return_log_pseudo:
-            return (
-                log_pseudo_prior,
-                log_pseudo,
-            )  # return both pseudo_prior function and log pseudo_prior values
-        return log_pseudo_prior
-
-    def _perturb(self, gmm, xc):
-        pert = gmm.sample()[0] - gmm.means_
-        mask = np.ones(pert.shape[1], dtype=bool)
-        i = random.choice(np.arange(len(xc)))
-        mask[i] = 0
-        pert[0, mask] = 0.0
-        y = pert + xc
-        return gmm.score(y), y[0]
+        return build_auto_pseudo_prior(
+            self.nstates,
+            self.ndims,
+            pos,
+            log_posterior,
+            log_posterior_args=log_posterior_args,
+            ensemble_per_state=ensemble_per_state,
+            log_posterior_ens=log_posterior_ens,
+            discard=discard,
+            thin=thin,
+            autothin=autothin,
+            parallel=parallel,
+            n_samples=nsamples,
+            n_walkers=nwalkers,
+            return_log_pseudo=return_log_pseudo,
+            progress=progress,
+            verbose=verbose,
+            fitmeancov=fitmeancov,
+            **kwargs,
+        )
 
     def run_product_space_sampler(  # Independent state Metropolis algorithm sampling across product space. This is algorithm 'TransC-product-space'
         self,
@@ -666,102 +360,35 @@ class TransC_Sampler:  # Independent state MCMC parameter class
         alg - string                 : string defining the sampler method used.
 
         """
+        self.alg = "TransC-product-space"
 
-        random.seed(seed)
-
-        self.nwalkers = nwalkers
-        self.nsteps = nsteps
-        if progress:
-            print("\nRunning product space trans-C sampler")
-            print("\nNumber of walkers               : ", self.nwalkers)
-            print("Number of states being sampled  : ", self.nstates)
-            print("Dimensions of each state        : ", self.ndims)
-
-        if parallel and not suppresswarnings:  # do some housekeeping checks
-            if self.nwalkers == 1:
-                warnings.warn(
-                    " Parallel mode used but only a single walker specified. Nothing to parallelize over?"
-                )
-
-        ndim_ps = np.sum(self.ndims) + 1  # dimension of product space
-
-        pos_ps = self._modelvectors2productspace(
-            pos, pos_state, nwalkers
-        )  # convert initial walker positions to product space model vectors
-
-        logfunc = partial(
-            self._productspace_log_prob,
-            log_posterior=log_posterior,
-            log_pseudo_prior=log_pseudo_prior,
+        sampler = run_product_space_sampler(
+            nwalkers,
+            nsteps,
+            self.nstates,
+            self.ndims,
+            pos,
+            pos_state,
+            log_posterior,
+            log_pseudo_prior,
             log_posterior_args=log_posterior_args,
             log_pseudo_prior_args=log_pseudo_prior_args,
+            seed=seed,
+            parallel=parallel,
+            n_processors=nprocessors,
+            progress=progress,
+            suppress_warnings=suppresswarnings,
+            my_pool=mypool,
+            skip_initial_state_check=skip_initial_state_check,
+            **kwargs,
         )
 
-        if parallel:
-            if nprocessors == 1:
-                nprocessors = (
-                    multiprocessing.cpu_count()
-                )  # set number of processors equal to those available
-
-            if mypool:  # try to run emcee myself on separate cores (doesn't make sense for emcee to do this as nwalkers > 2*ndim for performance)
-                chunksize = int(
-                    np.ceil(nwalkers / nprocessors)
-                )  # set work per0 processor
-                jobs = [
-                    pos_ps[i] for i in range(nwalkers)
-                ]  # input data for parallel jobs
-                print(" nsteps", nsteps)
-                func = partial(
-                    self._myemcee,
-                    nsteps=nsteps,
-                    logfunc=logfunc,
-                    ndim=ndim_ps,
-                    progress=progress,
-                    kwargs=kwargs,
-                )
-                # return func,jobs,nprocessors,chunksize
-                result = []
-                pool = multiprocessing.Pool(processes=nprocessors)
-                res = pool.map(func, jobs, chunksize=chunksize)
-                result.append(res)
-                pool.close()
-                pool.join()
-                return result
-
-            else:  # use emcee in parallel
-                with multiprocessing.Pool() as pool:
-                    sampler = emcee.EnsembleSampler(  # instantiate emcee class
-                        nwalkers, ndim_ps, logfunc, pool=pool, **kwargs
-                    )
-
-                    sampler.run_mcmc(pos_ps, nsteps, progress=progress)  # run sampler
-
-        else:
-            sampler = emcee.EnsembleSampler(  # instantiate emcee class
-                nwalkers, ndim_ps, logfunc, **kwargs
-            )
-
-            sampler.run_mcmc(
-                pos_ps,
-                nsteps,
-                progress=progress,
-                skip_initial_state_check=skip_initial_state_check,
-            )  # run sampler
-
+        # In the mypool=True case this will be a list of samplers
+        # but I don't think it is correctly handled in downstream functions
+        # e.g. get_visits_to_states
         self.productspace_sampler = sampler
-        self.alg = "TransC-product-space"
-        self.nprocessors = nprocessors
-
-    def _myemcee(self, pos, nsteps, logfunc, ndim, progress, kwargs):
-        # print(' pos',pos)
-        # print(' nsteps',nsteps)
-        sampler = emcee.EnsembleSampler(  # instantiate emcee class with a single walker
-            1, ndim, logfunc, **kwargs
-        )
-
-        sampler.run_mcmc(pos, nsteps, progress=progress)  # run sampler
-
-        return sampler
+        self.nwalkers = nwalkers
+        self.nsteps = nsteps
 
     def run_state_jump_sampler(  # Independent state MCMC sampler on product space with proposal equal to pseudo prior
         self,
@@ -828,108 +455,38 @@ class TransC_Sampler:  # Independent state MCMC parameter class
         or according to a prescribed PDF within the respective state, e.g. the pseudo-prior again. An independent user supplied proposal function is provided for flexibility.
 
         """
-
-        self.nsteps = nsteps
-        self.nwalkers = nwalkers
-
-        if progress:
-            print("\nRunning state-jump trans-C sampler")
-            print("\nNumber of walkers               : ", self.nwalkers)
-            print("Number of states being sampled  : ", self.nstates)
-            print("Dimensions of each state        : ", self.ndims)
-
-        if parallel and not suppresswarnings:  # do some housekeeping checks
-            if self.nwalkers == 1:
-                warnings.warn(
-                    " Parallel mode used but only a single walker specified. Nothing to parallelize over?"
-                )
-
-        random.seed(seed)
-        self.nsteps = nsteps
-        state_chain_tot = np.zeros((nwalkers, nsteps, self.nstates), dtype=int)
-        state_chain = np.zeros((nwalkers, nsteps), dtype=int)
-        model_chain = []
-        accept_within = np.zeros(nwalkers)
-        accept_between = np.zeros(nwalkers)
-        prop_within = np.zeros(nwalkers)
-        prop_between = np.zeros(nwalkers)
-
-        if parallel:  # put random walkers on different processors
-            if nprocessors == 1:
-                nprocessors = (
-                    multiprocessing.cpu_count()
-                )  # set number of processors equal to those available
-            chunksize = int(np.ceil(nwalkers / nprocessors))  # set work per processor
-            jobs = [
-                (pos_state[i], pos[i]) for i in range(nwalkers)
-            ]  # input data for parallel jobs
-            func = partial(
-                self._mcmc_walker,
-                log_posterior=log_posterior,
-                log_pseudo_prior=log_pseudo_prior,
-                log_proposal=log_proposal,
-                log_posterior_args=log_posterior_args,
-                log_pseudo_prior_args=log_pseudo_prior_args,
-                log_proposal_args=log_proposal_args,
-                nsteps=nsteps,
-                prob_state=prob_state,
-                verbose=verbose,
-            )
-            result = []
-            if progress:
-                with multiprocessing.Pool(processes=nprocessors) as pool:
-                    res = list(
-                        tqdm(
-                            pool.imap_unordered(func, jobs, chunksize=chunksize),
-                            total=len(jobs),
-                        )
-                    )
-            else:
-                pool = multiprocessing.Pool(processes=nprocessors)
-                res = pool.map(func, jobs, chunksize=chunksize)
-            result.append(res)
-            pool.close()
-            pool.join()
-            for i in range(nwalkers):  # decode the output
-                state_chain_tot[i] = result[0][i][2]
-                state_chain[i] = result[0][i][1]
-                model_chain.append(result[0][i][0])
-                accept_within[i] = result[0][i][3]
-                accept_between[i] = result[0][i][5]
-                prop_within[i] = result[0][i][4]
-                prop_between[i] = result[0][i][6]
-
-        else:
-            for walker in self._myrange(progress, nwalkers):  # loop over walkers
-                cstate = pos_state[walker]  # initial state
-                cmodel = pos[walker]
-                out = self._mcmc_walker(
-                    [cstate, cmodel],
-                    log_posterior,
-                    log_pseudo_prior,
-                    log_posterior_args,
-                    log_pseudo_prior_args,
-                    log_proposal,
-                    log_proposal_args,
-                    nsteps,
-                    prob_state,
-                    verbose,
-                )
-
-                (
-                    chain,
-                    state_chainw,
-                    state_chain_totw,
-                    accept_within[walker],
-                    prop_within[walker],
-                    accept_between[walker],
-                    prop_between[walker],
-                ) = out
-                state_chain_tot[walker] = state_chain_totw
-                state_chain[walker] = state_chainw
-                model_chain.append(chain)  # record locations visited for this walker
-
         self.alg = "TransC-state-jump-sampler"
+
+        (
+            model_chain,
+            state_chain,
+            state_chain_tot,
+            accept_within,
+            prop_within,
+            accept_between,
+            prop_between,
+        ) = run_state_jump_sampler(
+            nwalkers,
+            nsteps,
+            self.nstates,
+            self.ndims,
+            pos,
+            pos_state,
+            log_posterior,
+            log_pseudo_prior,
+            log_proposal,
+            log_posterior_args=log_posterior_args,
+            log_pseudo_prior_args=log_pseudo_prior_args,
+            log_proposal_args=log_proposal_args,
+            prob_state=prob_state,
+            seed=seed,
+            parallel=parallel,
+            n_processors=nprocessors,
+            progress=progress,
+            suppress_warnings=suppresswarnings,
+            verbose=verbose,
+        )
+
         self.state_chain_tot = np.swapaxes(state_chain_tot, 0, 1)
         self.state_chain = state_chain.T
         self.model_chain = model_chain
@@ -937,108 +494,8 @@ class TransC_Sampler:  # Independent state MCMC parameter class
         self.accept_between_per_walker = accept_between / prop_between
         self.accept_within = 100 * np.mean(self.accept_within_per_walker)
         self.accept_between = 100 * np.mean(self.accept_between_per_walker)
-        self.nprocessors = nprocessors
-
-    def _myrange(self, progress, length):
-        if progress:
-            return tqdm(range(length))
-        return range(length)
-
-    def _mcmc_walker(
-        self,
-        cstate_cmodel,
-        log_posterior,
-        log_pseudo_prior,
-        log_posterior_args,
-        log_pseudo_prior_args,
-        log_proposal,
-        log_proposal_args,
-        nsteps,
-        prob_state,
-        verbose,
-    ):
-        cstate, cmodel = cstate_cmodel
-        visits = np.zeros(self.nstates, dtype=int)
-        lpostc = log_posterior(
-            cmodel, cstate, *log_posterior_args
-        )  # initial log-posterior
-        lpseudoc = log_pseudo_prior(
-            cmodel, cstate, *log_pseudo_prior_args
-        )  # initial log-pseudo prior
-        chain = []
-        state_chain_tot = np.zeros((nsteps, self.nstates), dtype=int)
-        state_chain = np.zeros((nsteps), dtype=int)
-        prop_between, prop_within, accept_within, accept_between = 0, 0, 0, 0
-
-        for chainstep in range(nsteps):  # loop over markov chain steps
-            if random.random() < prob_state:  # Choose to propose a new state
-                states = list(range(self.nstates))  # list of all states
-                states.remove(cstate)  # list of available states
-                pstate = random.choice(states)  # choose proposed state
-                if verbose:
-                    print("current state", cstate, " propose state", pstate)
-                within = False
-                prop_between += 1
-                lpseudop, pmodel = log_pseudo_prior(
-                    None, pstate, *log_pseudo_prior_args, returndeviate=True
-                )  # log pseudo-prior for proposed state and generate it
-
-                logpert = lpseudoc - lpseudop  # log difference in pseduo-priors
-
-            else:  # Choose to propose a new model within current state
-                pstate = np.copy(cstate)  # retain current state
-                if verbose:
-                    print("within state", cstate, " model change")
-                within = True
-                prop_within += 1
-                logpert, pmodel = log_proposal(
-                    cmodel, pstate, *log_proposal_args
-                )  # generate proposed model in current state and calculate log density ratio
-
-            lpostp = log_posterior(
-                pmodel, pstate, *log_posterior_args
-            )  # log posterior for proposed state
-
-            logr = lpostp - lpostc + logpert  # Metropolis-Hastings acceptance criterion
-
-            if logr >= np.log(random.random()):  # Accept move
-                if verbose:
-                    print(" Accept move")
-                    print(" cmodel", cmodel, "pmodel", pmodel)
-                visits[pstate] += 1
-                cstate = np.copy(pstate)
-                cmodel = np.copy(pmodel)
-                lpostc = np.copy(lpostp)
-                if within:
-                    lpseudop = log_pseudo_prior(
-                        pmodel, pstate, *log_pseudo_prior_args
-                    )  # record log pseudo-prior for new state
-                lpseudoc = np.copy(lpseudop)
-                if within:
-                    accept_within += 1
-                else:
-                    accept_between += 1
-            else:  # Reject move
-                if verbose:
-                    print(" Reject move")
-                    print(" cmodel", cmodel, "pmodel", pmodel)
-                visits[cstate] += 1
-
-            chain.append(cmodel)
-            state_chain[chainstep] = cstate  # record state for this step and walker
-            state_chain_tot[chainstep] = (
-                visits  # record cumulative tally of states visited for this step and walker
-            )
-
-        return (
-            chain,
-            state_chain,
-            state_chain_tot,
-            accept_within,
-            prop_within,
-            accept_between,
-            prop_between,
-        )
+        self.nwalkers = nwalkers
+        self.nsteps = nsteps
 
     def run_ensemble_resampler(  # Independent state Marginal Likelihoods from pre-computed posterior and pseudo prior ensembles
         self,
@@ -1083,95 +540,18 @@ class TransC_Sampler:  # Independent state MCMC parameter class
 
         """
 
-        if (
-            not self.run_fit
-        ):  # mixture fitting has not been performed and so we need input ensembles
-            if (log_pseudo_prior_ens is None) and (log_posterior_ens is not None):
-                raise Inputerror(
-                    msg=" In function run_is_ensemble_resampler: Ensemble probabilities provided as argument without pseudo-prior probabilities"
-                )
-
-            if (log_pseudo_prior_ens is not None) and (log_posterior_ens is None):
-                raise Inputerror(
-                    msg=" In function run_is_ensemble_resampler: Pseudo-prior probabilities provided as argument without ensemble probabilities"
-                )
-
-            if (log_pseudo_prior_ens is None) and (log_posterior_ens is None):
-                raise Inputerror(
-                    msg=" In function run_is_ensemble_resampler: Pseudo-prior probabilities and ensemble probabilities not provided"
-                )
-
-            self.nstates = len(log_posterior_ens)
-            self.nsamples = [len(a) for a in log_posterior_ens]
-
-        else:  # mixture fitting has been performed
-            if (log_pseudo_prior_ens is not None) and (
-                log_posterior_ens is not None
-            ):  # we use input ensembles if available
-                self.nstates = len(log_posterior_ens)
-                self.nsamples = [len(a) for a in log_posterior_ens]
-
-        self.nwalkers = nwalkers
-        self.nsteps = nsteps
-        print("\nRunning ensemble resampler")
-        print("\nNumber of walkers               : ", self.nwalkers)
-        print("Number of states being sampled  : ", self.nstates)
-        print("Dimensions of each state        : ", self.ndims)
-
-        random.seed(seed)
-        state_chain_tot = np.zeros((nwalkers, nsteps, self.nstates), dtype=int)
-        state_chain = np.zeros((nwalkers, nsteps), dtype=int)
-        accept_between = np.zeros(nwalkers, dtype=int)
-        if parallel:
-            if nprocessors == 1:
-                nprocessors = (
-                    multiprocessing.cpu_count()
-                )  # set number of processors equal to those available
-            chunksize = int(np.ceil(nwalkers / nprocessors))  # set work per processor
-            jobs = random.choices(
-                range(self.nstates), k=nwalkers
-            )  # input data for parallel jobs
-            func = partial(
-                self._mcmc_walker_ens,  # create reduced one argument function for passing to pool.map())
-                nsteps=nsteps,
-                log_posterior_ens=log_posterior_ens,
-                log_pseudo_prior_ens=log_pseudo_prior_ens,
-                stateproposalweights=stateproposalweights,
-            )
-            result = []
-            if progress:
-                with multiprocessing.Pool(processes=nprocessors) as pool:
-                    res = list(
-                        tqdm(
-                            pool.imap(func, jobs, chunksize=chunksize), total=len(jobs)
-                        )
-                    )
-            else:
-                pool = multiprocessing.Pool(processes=nprocessors)
-                res = pool.map(func, jobs, chunksize=chunksize)
-            result.append(res)
-            pool.close()
-            pool.join()
-            for i in range(nwalkers):  # decode the output
-                state_chain_tot[i] = result[0][i][1]
-                state_chain[i] = result[0][i][0]
-                accept_between[i] = result[0][i][2]
-
-            pass
-        else:
-            for walker in self._myrange(progress, nwalkers):
-                cstate = random.choice(
-                    range(self.nstates)
-                )  # choose initial current state randomly
-                state_chain[walker], state_chain_tot[walker], accept_between[walker] = (
-                    self._mcmc_walker_ens(
-                        cstate,
-                        nsteps,
-                        log_posterior_ens,
-                        log_pseudo_prior_ens,
-                        stateproposalweights=stateproposalweights,
-                    )
-                )  # carry out an mcmc walk between ensembles
+        state_chain, state_chain_tot, accept_between = run_ensemble_resampler(
+            nwalkers,
+            nsteps,
+            self.ndims,
+            log_posterior_ens=log_posterior_ens,
+            log_pseudo_prior_ens=log_pseudo_prior_ens,
+            seed=seed,
+            parallel=parallel,
+            n_processors=nprocessors,
+            state_proposal_weights=stateproposalweights,
+            progress=progress,
+        )
 
         self.alg = "TransC-ensemble-resampler"
         self.state_chain_tot = np.swapaxes(state_chain_tot, 0, 1)
@@ -1180,106 +560,8 @@ class TransC_Sampler:  # Independent state MCMC parameter class
         self.accept_between_per_walker = accept_between / nsteps
         self.accept_within = 100 * np.mean(self.accept_within_per_walker)
         self.accept_between = 100 * np.mean(self.accept_between_per_walker)
-        self.nprocessors = nprocessors
-
-    def _mcmc_walker_ens(
-        self,
-        cstate,
-        nsteps,
-        log_posterior_ens,
-        log_pseudo_prior_ens,
-        stateproposalweights=None,
-        verbose=False,
-    ):
-        """Internal one chain MCMC sampler used by run_ensemble_resampler()."""
-
-        visits = np.zeros(self.nstates)
-        state_chain_tot = np.zeros((nsteps, self.nstates), dtype=int)
-        state_chain = np.zeros((nsteps), dtype=int)
-        cmember = random.choice(
-            range(self.nsamples[cstate])
-        )  # randomly choose ensemble member from current state
-        visits[cstate] += 1
-        state_chain[0] = cstate  # record initial state for this step and walker
-        state_chain_tot[0] = visits  # record initial current state visited by chain
-        accept = 0
-        if stateproposalweights is None:
-            stateproposalweights = np.ones((self.nstates, self.nstates))
-        else:
-            np.fill_diagonal(stateproposalweights, 0.0)  # ensure diagonal is zero
-            stateproposalweights = stateproposalweights / stateproposalweights.sum(
-                axis=1, keepdims=1
-            )  # set row sums to unity
-
-        for chainstep in range(nsteps - 1):  # loop over markov chain steps
-            states = list(range(self.nstates))  # list of all states
-            states.remove(cstate)  # list of available states
-            # weights = stateweights[np.ix_(np.delete(np.arange(self.nstates),cstate),np.delete(np.arange(self.nstates),cstate))]
-            weights = stateproposalweights[
-                cstate, np.delete(np.arange(self.nstates), cstate)
-            ]
-            # pstate = random.choice(states)  # choose proposed state
-            pstate = random.choices(states, weights=weights)[0]  # choose proposed state
-            pmember = random.choice(
-                range(self.nsamples[pstate])
-            )  # randomly select ensemble member from proposed state
-
-            if (log_pseudo_prior_ens is not None) and (
-                log_posterior_ens is not None
-            ):  # use provided pseudo-priors
-                lpseudoc = log_pseudo_prior_ens[cstate][
-                    cmember
-                ]  # log pseudo-prior for current state
-                lpseudop = log_pseudo_prior_ens[pstate][
-                    pmember
-                ]  # log pseudo-prior for proposed state
-                lpostc = log_posterior_ens[cstate][
-                    cmember
-                ]  # log posterior for current state
-                lpostp = log_posterior_ens[pstate][
-                    pmember
-                ]  # log posterior for proposed state
-
-            elif self.run_fit:  # use internally calculated pseudo-priors
-                lpseudoc = self.log_pseudo_prior_ens[cstate][
-                    cmember
-                ]  # log pseudo-prior for current state
-                lpseudop = self.log_pseudo_prior_ens[pstate][
-                    pmember
-                ]  # log pseudo-prior for proposed state
-                lpostc = self.log_posterior_ens[cstate][
-                    cmember
-                ]  # log posterior for current state
-                lpostp = self.log_posterior_ens[pstate][
-                    pmember
-                ]  # log posterior for proposed state
-
-            lprop = np.log(stateproposalweights[pstate, cstate]) - np.log(
-                stateproposalweights[cstate, pstate]
-            )
-
-            logr = (
-                lpostp + lpseudoc - lpostc - lpseudop + lprop
-            )  # Metropolis-Hastings acceptance criteria
-
-            if logr >= np.log(random.random()):  # Accept move between states
-                visits[pstate] += 1
-                cstate = np.copy(pstate)
-                cmember = np.copy(pmember)
-                accept += 1
-            else:
-                # Reject move between states
-
-                visits[cstate] += 1
-
-            state_chain[chainstep + 1] = cstate  # record state for this step and walker
-            state_chain_tot[chainstep + 1] = (
-                visits  # record current state visited by chain
-            )
-
-        self.stateproposalweights = stateproposalweights
-
-        return state_chain, state_chain_tot, accept
+        self.nwalkers = nwalkers
+        self.nsteps = nsteps
 
     def run_ens_mcint(  #  Marginal Likelihoods from Monte Carlo integration
         self,
@@ -1313,17 +595,17 @@ class TransC_Sampler:  # Independent state MCMC parameter class
 
         if not self.run_fit:  # mixture fitting has not been performed and so we need input ensembles, so check that we have them
             if (log_pseudo_prior_ens is None) and (log_posterior_ens is not None):
-                raise Inputerror(
+                raise InputError(
                     msg=" In function run_ens_mcint: Ensemble probabilities provided as argument without pseudo-prior probabilities"
                 )
 
             if (log_pseudo_prior_ens is not None) and (log_posterior_ens is None):
-                raise Inputerror(
+                raise InputError(
                     msg=" In function run_ens_mcint: Pseudo-prior probabilities provided as argument without ensemble probabilities"
                 )
 
             if (log_pseudo_prior_ens is None) and (log_posterior_ens is None):
-                raise Inputerror(
+                raise InputError(
                     msg=" In function run_ens_mcint: Pseudo-prior probabilities and ensemble probabilities not provided"
                 )
 
@@ -1343,30 +625,13 @@ class TransC_Sampler:  # Independent state MCMC parameter class
 
         self.alg = "TransC-integration"
 
-        ens_r = []
-        ens_mc_samples = []
-        factor = np.min(
-            [
-                np.min(log_posterior_ens[i] - log_pseudo_prior_ens[i])
-                for i in range(self.nstates)
-            ]
+        self.relative_marginal_likelihoods, self.ens_mc_samples = run_ens_mcint(
+            self.nstates,
+            log_posterior_ens,
+            log_pseudo_prior_ens,
         )
-        for state in range(self.nstates):
-            ratio_state = np.exp(
-                log_posterior_ens[state] - log_pseudo_prior_ens[state] - factor
-            )
-            ens_mc_samples.append(ratio_state)
-            ens_r.append(np.mean(ratio_state))
-
-        tot = np.sum(ens_r)
-        for state in range(self.nstates):
-            ens_mc_samples[state] /= tot
-        self.ens_mc_samples = ens_mc_samples
-
         if return_marginallikelihoods:
-            return ens_r / tot
-        else:
-            self.relative_marginal_likelihoods = ens_r / tot
+            return self.relative_marginal_likelihoods
 
     def run_laplace_evidence_approximation(
         self,
@@ -1417,98 +682,31 @@ class TransC_Sampler:  # Independent state MCMC parameter class
         """
 
         if (ensemble_per_state is None) and (log_posterior_ens is not None):
-            raise Inputerror(
+            raise InputError(
                 msg=" In function run_laplace_evidence_approximation: Ensemble probabilities provided as argument without ensemble co-ordinates"
             )
 
         if (ensemble_per_state is not None) and (log_posterior_ens is None):
-            raise Inputerror(
+            raise InputError(
                 msg=" In function run_laplace_evidence_approximation: Ensemble co-ordinates provided as argument without ensemble probabilities"
             )
 
-        if (
-            isinstance(ensemble_per_state, list) and isinstance(log_posterior_ens, list)
-        ):  # we use input ensemble
-            if verbose:
-                print(
-                    "run_laplace_evidence_approximation: We are using input ensembles rather than input log_posterior function"
-                )
-
-            # we fit a mean and covariance to esnembles in each state
-            # if(verbose): print("Fitting mean and covariance of input ensembles")
-            covs_, maps_, lpms_ = [], [], []
-            lml = []
-            for state in range(len(ensemble_per_state)):  # loop over states
-                covs_.append(
-                    np.cov(ensemble_per_state[state].T)
-                )  # calculate covariance matrices for state
-                j = np.argmax(log_posterior_ens[state])  # get map model index
-                maps_.append(ensemble_per_state[state][j])  # get map model
-                lpms_.append(log_posterior_ens[state][j])
-                covar = np.cov(ensemble_per_state[state].T)
-                p1 = (self.ndims[state] / 2.0) * np.log(2 * np.pi)
-                p3 = log_posterior_ens[state][j]
-                # get determinant of negative inverse of covariance (-H) (NB determinant sign depends on dimension being odd or even)
-                if self.ndims[state] % 2:  # dimension is odd number
-                    if self.ndims[state] == 1:
-                        p2 = 0.5 * np.log(covar)
-                    else:
-                        sign, logabsdet = np.linalg.slogdet(covar)
-                        p2 = 0.5 * sign * logabsdet
-                else:
-                    sign, logabsdet = np.linalg.slogdet(-covar)
-                    p2 = 0.5 * sign * logabsdet
-                lml.append(p1 + p2 + p3)
-            laplace_hessians = covs_
-            laplace_map_models_per_state = maps_
-            laplace_map_log_posteriors = lpms_
-        else:  # we are using the supplied log_posterior() function so need Hessian and MAp model
-            if verbose:
-                if optimize:
-                    print(
-                        "run_laplace_evidence_approximation: We are using input log_posterior function with optimization for MAP models"
-                    )
-                else:
-                    print(
-                        "run_laplace_evidence_approximation: We are using input log_posterior function with provided MAP models"
-                    )
-
-            (
-                laplace_hessians,
-                laplace_map_models_per_state,
-                laplace_map_log_posteriors,
-            ) = ([], [], [])
-            lml = []
-            for state in range(self.nstates):
-                fun = lambda x: log_posterior(x, state, *log_posterior_args)
-                if optimize:
-                    fun2 = lambda x: -log_posterior(x, state, *log_posterior_args)
-                    soln = minimize(fun2, map_models[state])
-                    map_model = soln.x
-                else:
-                    map_model = np.array(map_models[state])
-                dfun = nd.Hessian(fun)
-                laplace_hessians.append(dfun(map_model))
-                laplace_map_models_per_state.append(map_model)
-                laplace_map_log_posteriors.append(fun(map_model))
-
-                p1 = (self.ndims[state] / 2.0) * np.log(2 * np.pi)
-                p3 = fun(map_model)
-                # print(det)
-                if self.ndims[state] == 1:
-                    p2 = -0.5 * np.log(-dfun(map_model))
-                else:
-                    # det = np.linalg.det(-dfun(map_model))
-                    sign, logabsdet = np.linalg.slogdet(-dfun(map_model))
-                    # print(det,np.log(det),sign,logabsdet)
-                    p2 = -0.5 * sign * logabsdet
-
-                lml.append(p1 + p2 + p3)
-
-        self.laplace_map_log_posteriors = laplace_map_log_posteriors
-        self.laplace_map_models_per_state = laplace_map_models_per_state
-        self.laplace_hessians = laplace_hessians
-        self.laplace_log_marginal_likelihoods = lml
+        (
+            self.laplace_hessians,
+            self.laplace_map_models_per_state,
+            self.laplace_map_log_posteriors,
+            self.laplace_log_marginal_likelihoods,
+        ) = run_laplace_evidence_approximation(
+            self.nstates,
+            self.ndims,
+            log_posterior,
+            map_models,
+            log_posterior_args=log_posterior_args,
+            ensemble_per_state=ensemble_per_state,
+            log_posterior_ens=log_posterior_ens,
+            verbose=verbose,
+            optimize=optimize,
+        )
 
     def get_visits_to_states(  # calculate evolution of relative visits to each state along chain
         self,
@@ -1518,8 +716,6 @@ class TransC_Sampler:  # Independent state MCMC parameter class
         flat=False,
         walker_average="median",
         return_samples=False,
-        calc_autocorr=True,
-        ntd_samples=None,
     ):
         """
         Utility routine to retrieve proportion of visits to each state as a function of chain step, i.e. calculates the relative evidence/marginal Liklihoods of states.
@@ -1551,96 +747,42 @@ class TransC_Sampler:  # Independent state MCMC parameter class
         total_state_changes - int            : total number of state changes for all walkers
 
         """
-        if (
-            self.alg == "TransC-product-space"
-        ):  # calculate fraction of visits to each state along chain averaged over walkers
-            samples = self.productspace_sampler.get_chain(
-                discard=discard, thin=thin
-            )  # collect model ensemble
-            self.state_chain = np.rint(samples[:, :, 0]).astype("int")
-            visits = np.zeros(
-                (np.shape(samples)[0], np.shape(samples)[1], self.nstates)
-            )
-            for i in range(self.nstates):
-                visits[:, :, i] = np.cumsum(self.state_chain == i, axis=0)
-            self.state_chain_tot = visits
-            if normalize:
-                for _ in range(self.nstates):
-                    visits /= np.sum(visits, axis=2)[:, :, np.newaxis]
-            out = visits
-            if flat and walker_average == "mean":
-                out = np.mean(
-                    visits, axis=1
-                )  # fraction of visits to each state along chain averaged over walkers
-            if flat and walker_average == "median":
-                out = np.median(
-                    visits, axis=1
-                )  # fraction of visits to each state along chain averaged over walkers
-            if flat:
-                self.relative_marginal_likelihoods = out[-1]
-            else:
-                self.relative_marginal_likelihoods = np.mean(out[-1], axis=0)
-            samples = self.state_chain
-
-            self.acceptance_rate_perwalker = (
-                self.productspace_sampler.acceptance_fraction
-            )
-            self.acceptance_rate = 100 * np.mean(self.acceptance_rate_perwalker)
-            if calc_autocorr:
-                self.mean_autocorr_time = np.mean(
-                    self.productspace_sampler.get_autocorr_time(tol=0)
-                )  # mean autocorrelation time in steps for all parameters
-                self.max_autocorr_time = np.max(
-                    self.productspace_sampler.get_autocorr_time(tol=0)
-                )  # max autocorrelation time in steps for all parameters
-                self.autocorr_time_for_between_state_jumps = (
-                    self.productspace_sampler.get_autocorr_time(tol=0)[0]
-                )
-
-        elif (
-            self.alg == "TransC-integration"
-        ):  # generate samples over states with calculated evidences as weights
-            if ntd_samples is None:
-                ntd_samples = len(self.ens_mc_samples[0])
-            samples = np.random.default_rng().choice(
-                self.nstates, ntd_samples, p=self.relative_marginal_likelihoods
-            )
-            return samples
+        if self.alg == "TransC-product-space":
+            self.state_chain = None
+            self.state_chain_tot = None
         else:
-            visits = self.state_chain_tot[discard::thin, :, :].astype("float")
-            if normalize:
-                visits /= np.sum(visits, axis=2)[:, :, np.newaxis]
-            out = visits
-            samples = self.state_chain[discard::thin, :]
-            if flat and walker_average == "mean":
-                out = np.mean(
-                    visits, axis=1
-                )  # fraction of visits to each state along chain averaged over walkers
-            if flat and walker_average == "median":
-                out = np.median(
-                    visits, axis=1
-                )  # fraction of visits to each state along chain averaged over walkers
-            if flat:
-                rml = out[-1]
-            else:
-                rml = np.mean(out[-1], axis=0)
-            if normalize:
-                rml /= np.sum(rml)
-            self.relative_marginal_likelihoods = rml
-            self.autocorr_time_for_between_state_jumps = autocorr_fardal(
-                self.state_chain.T
-            )
+            self.productspace_sampler = None
+        (
+            out,
+            samples,
+            self.relative_marginal_likelihoods,
+            self.state_changes_perwalker,
+            self.total_state_changes,
+            self.acceptance_rate_between_states,
+            self.autocorr_time_for_between_state_jumps,
+            *extra_product_space_outputs,
+        ) = get_visits_to_states(
+            self.alg,
+            self.nstates,
+            self.nwalkers,
+            self.nsteps,
+            self.state_chain_tot,
+            self.state_chain,
+            product_space_sampler=self.productspace_sampler,
+            discard=discard,
+            thin=thin,
+            normalize=normalize,
+            flat=flat,
+            walker_average=walker_average,
+        )
 
-        changes = np.zeros(self.nwalkers, dtype=int)
-        for i in range(self.nwalkers):
-            changes[i] = np.count_nonzero(samples.T[i][1:] - samples.T[i][:-1])
-
-        self.state_changes_perwalker = changes
-        self.total_state_changes = np.sum(changes)
-        if self.alg != "TransC-integration":
-            self.acceptance_rate_between_states = (
-                100 * self.total_state_changes * thin / (self.nwalkers * self.nsteps)
-            )
+        if self.alg == "TransC-product-space":
+            (
+                self.acceptance_rate_per_walker,
+                self.acceptance_rate,
+                self.mean_autocorr_time,
+                self.max_autocorr_time,
+            ) = extra_product_space_outputs
 
         if return_samples:
             return (
@@ -1686,283 +828,39 @@ class TransC_Sampler:  # Independent state MCMC parameter class
         """
         # if(not hasattr(self, 'relative_marginal_likelihoods')): # need to call get_visits_to_states for marginal Likelihoods
 
-        rng = np.random.default_rng()
-        if (
-            self.alg == "TransC-ensemble-resampler" or self.alg == "TransC-integration"
-        ):  # draw random trans-C models according to relative marginals for TransC-ens resampler
-            if hasattr(
-                self, "ensemble_per_state"
-            ):  # we have an internally calculated ensemble per state
-                ensemble_per_state = self.ensemble_per_state
-            elif (
-                ensemble_per_state is not None
-            ):  # no ensemble provided either internally or via calling sequence
-                pass
-            else:
-                raise Inputerror(
-                    msg=" In function get_transc_samples: No ensemble provided either as argument ensemble_per_state or generated via self.run_mcmc_per_state()"
-                )
+        # Hacky way to ensure that attributes are set up correctly
+        _attrs = [
+            "nsamples",
+            "state_chain",
+            "model_chain",
+            "relative_marginal_likelihoods",
+            "ensemble_per_state",
+            "productspace_sampler",
+        ]
+        for _attr in _attrs:
+            if not hasattr(self, _attr):
+                print("Setting attribute", _attr, "to None")
+                setattr(self, _attr, None)
 
-            if verbose:
-                print(
-                    "\n Generating trans-state ensemble of size ",
-                    ntd_samples,
-                    " using algorithm: ",
-                    self.alg,
-                    "\n",
-                )
-
-            # if(self.alg == 'TransC-integration'):
-            # states_chain = self.get_visits_to_states(normalize=True,flat=True)
-
-            states_chain = rng.choice(
-                self.nstates, size=ntd_samples, p=self.relative_marginal_likelihoods
-            )
-
-            model_chain = ntd_samples * [None]
-            for i in range(
-                ntd_samples
-            ):  # randomly select models from input state ensembles using evidence weights
-                j = rng.choice(self.nsamples[states_chain[i]])
-                model_chain[i] = ensemble_per_state[states_chain[i]][j]
-
-            transd_ensemble = []  # create transd ensemble of models ordered by states for a single walker
-            for i in range(self.nstates):
-                ind = [num for num, n in enumerate(states_chain) if n == i]
-                transd_ensemble.append(np.array([model_chain[j] for j in ind]))
-
-        elif (
-            self.alg == "TransC-product-space"
-        ):  # build trans-C model ensemble from product space chains for TransC resampler
-            samples = self.productspace_sampler.get_chain(
-                discard=discard, thin=thin, flat=flat
-            )  # collect model ensemble
-            ind1 = np.cumsum(self.ndims) + 1
-            ind0 = np.append(np.array([1]), ind1)
-
-            transd_ensemble = []  # create transd ensemble of models ordered by states
-
-            if flat:  # combine walkers
-                self.state_chain = np.rint(samples[:, 0]).astype("int")
-                model_chain = []
-                nsteps = np.shape(self.state_chain)[0]
-                for i in range(nsteps):
-                    model_chain.append(
-                        samples[
-                            i, ind0[self.state_chain[i]] : ind1[self.state_chain[i]]
-                        ]
-                    )
-
-                for i in range(self.nstates):
-                    ind = [num for num, n in enumerate(self.state_chain) if n == i]
-                    transd_ensemble.append(np.array([model_chain[j] for j in ind]))
-
-            else:  # separate ensemble by walkers
-                self.state_chain = np.rint(samples[:, :, 0]).astype("int")
-                nsteps, nwalkers = np.shape(self.state_chain)
-                model_chain = []
-                for i in range(nsteps):
-                    m = []
-                    for j in range(nwalkers):
-                        m.append(
-                            samples[
-                                i,
-                                j,
-                                ind0[self.state_chain[i, j]] : ind1[
-                                    self.state_chain[i, j]
-                                ],
-                            ]
-                        )
-                    model_chain.append(m)
-
-                st = np.transpose(self.state_chain)
-                nwalkers = np.shape(self.state_chain)[1]
-                for i in range(self.nstates):
-                    t = []
-                    for k in range(nwalkers):
-                        ind = [num for num, n in enumerate(st[k]) if n == i]
-                        t.append(np.array([model_chain[j][k] for j in ind]))
-                    transd_ensemble.append(t)
-
-            states_chain = self.state_chain
-
-        elif (
-            self.alg == "TransC-state-jump-sampler"
-        ):  # build trans-C model ensemble from product space chains for TransC-state-jump-sampler
-            model_chain = [
-                row[discard::thin] for row in self.model_chain
-            ]  # stride the list
-            states_chain = self.state_chain[discard::thin, :]  # stride the array
-
-            transd_ensemble = []  # create transd ensemble of models ordered by states
-            nsteps, nwalkers = np.shape(states_chain)
-            a = np.transpose(states_chain)
-
-            for i in range(self.nstates):
-                t = []
-                for k in range(nwalkers):
-                    ind = [num for num, n in enumerate(a[k]) if n == i]
-                    t.append([model_chain[k][j] for j in ind])
-                if flat:  # combine walkers
-                    transd_ensemble.append(self._flatten_extend(t))
-                else:  # separate ensemble by walkers
-                    transd_ensemble.append(t)
+        _return = get_transc_samples(
+            self.alg,
+            self.nstates,
+            self.ndims,
+            self.nsamples,
+            self.state_chain,
+            self.model_chain,
+            self.relative_marginal_likelihoods,
+            self.productspace_sampler,
+            ntd_samples=ntd_samples,
+            discard=discard,
+            thin=thin,
+            ensemble_per_state=ensemble_per_state,
+            flat=flat,
+        )
 
         if returnchains:
+            transd_ensemble, model_chain, states_chain = _return
             return transd_ensemble, model_chain, states_chain
-        return transd_ensemble
-
-    def _productspacevector2model(
-        self, x
-    ):  # convert a combined product space model space vector to model vector in each state
-        """
-        Internal utility routine to convert a single vector in product state format to a list of vectors of differing length one per state.
-
-        This routine is the inverse operation to routine '_modelvectors2productspace()'
-
-        Inputs:
-        x - float array or list : trans-C vectors in product space format. (length sum ndim[i], i=1,...,nstates)
-
-        Returns:
-        m - list of floats      : list of trans-C vectors one per state with format
-                                  m[i][v[i]], (i=1,...,nstates) where i is the state and v[i] is a model vector in state i.
-
-        """
-        m = []
-        kk = 1
-        for k in range(self.nstates):
-            m.append(x[kk : kk + self.ndims[k]])
-            kk += self.ndims[k]
-        return m
-
-    def _modelvectors2productspace(
-        self, m, states, nwalkers
-    ):  # convert model space vectors in each state to product space vectors
-        """
-        Internal utility routine to convert a list of vectors of differing length one per state to a single vector in product state format.
-
-        This routine is the inverse operation to routine '_productspacevector2model()' but over multiple walkers.
-
-        Inputs:
-        m - list of floats arrays      : list of trans-C vectors one per state with format
-                                          m[i][v[i]], (i=1,...,nstates) where i is the state and v[i] is a vector in state i.
-        states - nwalkers*int          : list of states for each walker/chain.
-        nwalkers - int                 : number of walkers.
-
-        Returns:
-        x - float array or list : trans-C vectors in product space format. (length = nwalkers*(1 + sum ndim[i], i=1,...,nstates))
-
-        """
-        x = np.zeros((nwalkers, self.ps_ndim + 1))
-        for j in range(nwalkers):
-            x[j, 0] = states[j]
-            x[j, 1:] = np.concatenate([m[i][j] for i in range(self.nstates)])
-        return x
-
-    def _productspace_log_prob(
-        self,
-        x,
-        log_posterior,
-        log_pseudo_prior,
-        log_posterior_args,
-        log_pseudo_prior_args,
-    ):  # Calculate product space target PDF from posterior and pseudo-priors in each state
-        """
-        Internal utility routine to calculate the combined target density for product space vector i.e. sum of log posterior + log pseudo prior density of all states.
-
-        here input vector is in product space format.
-
-        Inputs:
-        x - float array or list : trans-C vectors in product space format. (length = nwalkers*(1 + sum ndim[i], i=1,...,nstates))
-        log_posterior()              : user supplied function to evaluate the log-posterior density for the ith state at location x.
-                                       calling sequence log_posterior(x,i,*log_posterior_args)
-        log_pseudo_prior()           : user supplied function to evaluate the log-pseudo-prior density for the ith state at location x.
-                                       calling sequence log_posterior(x,i,*log_posterior_args).
-                                       NB: must be normalized over respective state spaces.
-        log_posterior_args - list    : user defined (optional) list of additional arguments passed to log_posterior. See calling sequence above.
-        log_pseudo_prior_args - list : user defined (optional) list of additional arguments passed to log_pseudo_prior. See calling sequence above.
-
-
-        Returns:
-        x - float array or list : trans-C vectors in product space format. (length sum ndim[i], i=1,...,nstates)
-
-        """
-        if x[0] < -0.5 or x[0] >= self.nstates - 0.5:
-            return -np.inf
-        state = int(np.rint(x[0]))
-        state = int(np.min((state, self.nstates - 1)))
-        state = int(np.max((state, 0)))
-        m = self._productspacevector2model(x)
-        log_prob = log_posterior(m[state], state, *log_posterior_args)
-        for i in range(self.nstates):
-            if i != state:
-                new = log_pseudo_prior(m[i], i, *log_pseudo_prior_args)
-                # print(' i ',i,'\nm',m[i],'\nlog_pseudo',new)
-                log_prob += new
-        return log_prob
-
-    def _flatten_extend(self, matrix):
-        flat_list = []
-        for row in matrix:
-            flat_list.extend(row)
-        return np.array(flat_list)
-
-
-# Following the suggestion from Goodman & Weare (2010) we implement routines for auto_correlation calculations
-
-
-def autocorr_gw2010(y, c=5.0):
-    """Auto correlation utility routine following Goodman & Weare (2010)."""
-    f = autocorr_func_1d(np.mean(y, axis=0))
-    taus = 2.0 * np.cumsum(f) - 1.0
-    window = auto_window(taus, c)
-    return taus[window]
-
-
-def autocorr_fardal(y, c=5.0):
-    """Auto correlation utility routine for improved auto correlation time estimate as per emcee notes.
-
-    see https://emcee.readthedocs.io/en/stable/tutorials/autocorr/
-    """
-    f = np.zeros(y.shape[1])
-    for yy in y:
-        f += autocorr_func_1d(yy)
-    f /= len(y)
-    taus = 2.0 * np.cumsum(f) - 1.0
-    window = auto_window(taus, c)
-    return taus[window]
-
-
-def next_pow_two(n):
-    """Auto correlation utility routine following Goodman & Weare (2010)."""
-    i = 1
-    while i < n:
-        i = i << 1
-    return i
-
-
-def autocorr_func_1d(x, norm=True):
-    """Auto correlation utility routine following Goodman & Weare (2010)."""
-    x = np.atleast_1d(x)
-    if len(x.shape) != 1:
-        raise ValueError("invalid dimensions for 1D autocorrelation function")
-    n = next_pow_two(len(x))
-
-    # Compute the FFT and then (from that) the auto-correlation function
-    f = np.fft.fft(x - np.mean(x), n=2 * n)
-    acf = np.fft.ifft(f * np.conjugate(f))[: len(x)].real
-    acf /= 4 * n
-
-    # Optionally normalize
-    if norm:
-        acf /= acf[0]
-
-    return acf
-
-
-def auto_window(taus, c):
-    """Auto correlation utility routine for Automated windowing procedure following Sokal (1989)."""
-    m = np.arange(len(taus)) < c * taus
-    if np.any(m):
-        return np.argmin(m)
-    return len(taus) - 1
+        else:
+            transd_ensemble = _return
+            return transd_ensemble
