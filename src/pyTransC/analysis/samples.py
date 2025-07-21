@@ -123,7 +123,7 @@ def _get_transc_samples_given_ensemble_per_state(
     for i in range(n_states):
         ind = [num for num, n in enumerate(states_chain) if n == i]
         transc_ensemble.append(np.array([model_chain[j] for j in ind]))
-    return transc_ensemble
+    return transc_ensemble, model_chain, states_chain
 
 
 def _get_transc_samples_given_product_space_sampler(

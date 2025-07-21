@@ -156,7 +156,7 @@ def _from_log_posterior(
 ):
     """Calculate Laplace approximation from log-posterior function."""
     hessians = []
-    map_models = []
+    _map_models = []
     map_log_posteriors = []
     log_marginal_likelihoods = []
     for state in range(n_states):
@@ -169,7 +169,7 @@ def _from_log_posterior(
             map_model = np.array(map_models[state])
         dfun = nd.Hessian(fun)
         hessians.append(dfun(map_model))
-        map_models.append(map_model)
+        _map_models.append(map_model)
         map_log_posteriors.append(fun(map_model))
 
         p1 = (n_dims[state] / 2.0) * np.log(2 * np.pi)
@@ -185,4 +185,4 @@ def _from_log_posterior(
 
         log_marginal_likelihoods.append(p1 + p2 + p3)
 
-    return hessians, map_models, map_log_posteriors, log_marginal_likelihoods
+    return hessians, _map_models, map_log_posteriors, log_marginal_likelihoods
