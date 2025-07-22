@@ -8,6 +8,8 @@ from functools import partial
 import numpy as np
 from tqdm import tqdm
 
+from pytransc.utils.auto_pseudo import PseudoPrior
+
 
 def run_state_jump_sampler(  # Independent state MCMC sampler on product space with proposal equal to pseudo prior
     n_walkers,
@@ -153,7 +155,6 @@ def run_state_jump_sampler(  # Independent state MCMC sampler on product space w
                 log_posterior,
                 log_pseudo_prior,
                 log_posterior_args,
-                log_pseudo_prior_args,
                 log_proposal,
                 log_proposal_args,
                 n_steps,
@@ -195,9 +196,8 @@ def _mcmc_walker(
     n_states: int,
     cstate_cmodel,
     log_posterior,
-    log_pseudo_prior,
+    log_pseudo_prior: PseudoPrior,
     log_posterior_args,
-    log_pseudo_prior_args,
     log_proposal,
     log_proposal_args,
     n_steps,
@@ -210,7 +210,7 @@ def _mcmc_walker(
         current_model, current_state, *log_posterior_args
     )  # initial log-posterior
     log_pseudo_prior_current = log_pseudo_prior(
-        current_model, current_state, *log_pseudo_prior_args
+        current_model, current_state
     )  # initial log-pseudo prior
     chain = []
     state_chain_tot = np.zeros((n_steps, n_states), dtype=int)
@@ -229,9 +229,8 @@ def _mcmc_walker(
                 print("current state", current_state, " propose state", proposed_state)
             within = False
             prop_between += 1
-            log_pseudo_prior_proposed, proposed_model = log_pseudo_prior(
-                None, proposed_state, *log_pseudo_prior_args, returndeviate=True
-            )  # log pseudo-prior for proposed state and generate it
+            proposed_model = log_pseudo_prior.draw_deviate(proposed_state)
+            log_pseudo_prior_proposed = log_pseudo_prior(proposed_model, proposed_state)
 
             log_proposal_prob = (
                 log_pseudo_prior_current - log_pseudo_prior_proposed
@@ -265,7 +264,8 @@ def _mcmc_walker(
             log_posterior_current = np.copy(log_posterior_proposed)
             if within:
                 log_pseudo_prior_proposed = log_pseudo_prior(
-                    proposed_model, proposed_state, *log_pseudo_prior_args
+                    proposed_model,
+                    proposed_state,
                 )  # record log pseudo-prior for new state
             log_pseudo_prior_current = np.copy(log_pseudo_prior_proposed)
             if within:

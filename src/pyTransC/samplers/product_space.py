@@ -8,6 +8,8 @@ from functools import partial
 import emcee
 import numpy as np
 
+from pytransc.utils.auto_pseudo import PseudoPrior
+
 
 def run_product_space_sampler(  # Independent state Metropolis algorithm sampling across product space. This is algorithm 'TransC-product-space'
     n_walkers: int,
@@ -17,9 +19,8 @@ def run_product_space_sampler(  # Independent state Metropolis algorithm samplin
     pos,
     pos_state,
     log_posterior,
-    log_pseudo_prior,
+    log_pseudo_prior: PseudoPrior,
     log_posterior_args=[],
-    log_pseudo_prior_args=[],
     seed=61254557,
     parallel=False,
     n_processors=1,
@@ -43,7 +44,6 @@ def run_product_space_sampler(  # Independent state Metropolis algorithm samplin
                                    calling sequence log_posterior(x,i,*log_posterior_args).
                                    NB: must be normalized over respective state spaces.
     log_posterior_args - list    : user defined (optional) list of additional arguments passed to log_posterior. See calling sequence above.
-    log_pseudo_prior_args - list : user defined (optional) list of additional arguments passed to log_pseudo_prior. See calling sequence above.
     prob_state - float           : probability of proposal a state change per step of Markov chain (otherwise a parameter change within current state is proposed)
     seed - int                   : random number seed
     parallel - bool              : switch to make use of multiprocessing package to parallelize over walkers
@@ -82,7 +82,6 @@ def run_product_space_sampler(  # Independent state Metropolis algorithm samplin
         log_posterior=log_posterior,
         log_pseudo_prior=log_pseudo_prior,
         log_posterior_args=log_posterior_args,
-        log_pseudo_prior_args=log_pseudo_prior_args,
     )
 
     if parallel:
@@ -199,9 +198,8 @@ def _product_space_log_prob(
     n_states: int,
     n_dims: list[int],
     log_posterior,
-    log_pseudo_prior,
+    log_pseudo_prior: PseudoPrior,
     log_posterior_args,
-    log_pseudo_prior_args,
 ):  # Calculate product space target PDF from posterior and pseudo-priors in each state
     """
     Internal utility routine to calculate the combined target density for product space vector i.e. sum of log posterior + log pseudo prior density of all states.
@@ -216,7 +214,6 @@ def _product_space_log_prob(
                                     calling sequence log_posterior(x,i,*log_posterior_args).
                                     NB: must be normalized over respective state spaces.
     log_posterior_args - list    : user defined (optional) list of additional arguments passed to log_posterior. See calling sequence above.
-    log_pseudo_prior_args - list : user defined (optional) list of additional arguments passed to log_pseudo_prior. See calling sequence above.
 
 
     Returns:
@@ -232,6 +229,6 @@ def _product_space_log_prob(
     log_prob = log_posterior(m[state], state, *log_posterior_args)
     for i in range(n_states):
         if i != state:
-            new = log_pseudo_prior(m[i], i, *log_pseudo_prior_args)
+            new = log_pseudo_prior(m[i], i)
             log_prob += new
     return log_prob
