@@ -21,7 +21,9 @@
         "mcint",
         "ndarray",
         "prob",
+        "Proposable",
         "resampler",
+        "Sampleable",
         "transc"
     ]
 }
