@@ -8,7 +8,7 @@ from functools import partial
 import emcee
 import numpy as np
 
-from pytransc.utils.auto_pseudo import PseudoPrior
+from ..utils.types import MultiStateDensity
 
 
 def run_product_space_sampler(  # Independent state Metropolis algorithm sampling across product space. This is algorithm 'TransC-product-space'
@@ -18,9 +18,8 @@ def run_product_space_sampler(  # Independent state Metropolis algorithm samplin
     n_dims: list[int],
     pos,
     pos_state,
-    log_posterior,
-    log_pseudo_prior: PseudoPrior,
-    log_posterior_args=[],
+    log_posterior: MultiStateDensity,
+    log_pseudo_prior: MultiStateDensity,
     seed=61254557,
     parallel=False,
     n_processors=1,
@@ -39,11 +38,10 @@ def run_product_space_sampler(  # Independent state Metropolis algorithm samplin
     pos - n_walkers*n_dims*float   : list of starting locations of markov chains in each state.
     pos_state - n_walkers*int     : list of starting states of markov chains in each state.
     log_posterior()              : user supplied function to evaluate the log-posterior density for the ith state at location x.
-                                   calling sequence log_posterior(x,i,*log_posterior_args)
+                                   calling sequence log_posterior(x,i)
     log_pseudo_prior()           : user supplied function to evaluate the log-pseudo-prior density for the ith state at location x.
-                                   calling sequence log_posterior(x,i,*log_posterior_args).
+                                   calling sequence log_posterior(x,i).
                                    NB: must be normalized over respective state spaces.
-    log_posterior_args - list    : user defined (optional) list of additional arguments passed to log_posterior. See calling sequence above.
     prob_state - float           : probability of proposal a state change per step of Markov chain (otherwise a parameter change within current state is proposed)
     seed - int                   : random number seed
     parallel - bool              : switch to make use of multiprocessing package to parallelize over walkers
@@ -81,7 +79,6 @@ def run_product_space_sampler(  # Independent state Metropolis algorithm samplin
         n_dims=n_dims,
         log_posterior=log_posterior,
         log_pseudo_prior=log_pseudo_prior,
-        log_posterior_args=log_posterior_args,
     )
 
     if parallel:
@@ -197,9 +194,8 @@ def _product_space_log_prob(
     x,
     n_states: int,
     n_dims: list[int],
-    log_posterior,
-    log_pseudo_prior: PseudoPrior,
-    log_posterior_args,
+    log_posterior: MultiStateDensity,
+    log_pseudo_prior: MultiStateDensity,
 ):  # Calculate product space target PDF from posterior and pseudo-priors in each state
     """
     Internal utility routine to calculate the combined target density for product space vector i.e. sum of log posterior + log pseudo prior density of all states.
@@ -209,11 +205,10 @@ def _product_space_log_prob(
     Inputs:
     x - float array or list : trans-C vectors in product space format. (length = n_walkers*(1 + sum n_dim[i], i=1,...,n_states))
     log_posterior()              : user supplied function to evaluate the log-posterior density for the ith state at location x.
-                                    calling sequence log_posterior(x,i,*log_posterior_args)
+                                    calling sequence log_posterior(x,i)
     log_pseudo_prior()           : user supplied function to evaluate the log-pseudo-prior density for the ith state at location x.
-                                    calling sequence log_posterior(x,i,*log_posterior_args).
+                                    calling sequence log_posterior(x,i).
                                     NB: must be normalized over respective state spaces.
-    log_posterior_args - list    : user defined (optional) list of additional arguments passed to log_posterior. See calling sequence above.
 
 
     Returns:
@@ -226,7 +221,7 @@ def _product_space_log_prob(
     state = int(np.min((state, n_states - 1)))
     state = int(np.max((state, 0)))
     m = _product_space_vector2model(x, n_states, n_dims)
-    log_prob = log_posterior(m[state], state, *log_posterior_args)
+    log_prob = log_posterior(m[state], state)
     for i in range(n_states):
         if i != state:
             new = log_pseudo_prior(m[i], i)

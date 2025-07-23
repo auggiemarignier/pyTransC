@@ -1,20 +1,18 @@
 """Functions to perform Laplace approximation of the evidence."""
 
-from typing import Any, Callable
-
 import numdifftools as nd
 import numpy as np
 from scipy.optimize import minimize
 
 from ..exceptions import InputError
+from ..utils.types import MultiStateDensity
 
 
 def run_laplace_evidence_approximation(
     n_states: int,
     n_dims: list[int],
-    log_posterior,
+    log_posterior: MultiStateDensity | None,
     map_models,
-    log_posterior_args=[],
     ensemble_per_state=None,
     log_posterior_ens=None,
     verbose=False,
@@ -28,11 +26,10 @@ def run_laplace_evidence_approximation(
     log_posterior : function    : Supplied function evaluating the log-posterior function
                                     up to a multiplicative constant, for each state.
                                     (Not used if ensemble_per_state and log_posterior_ens lists are provided)
-                                    Calling sequence log_posterior(x,state,*log_posterior_args)
+                                    Calling sequence log_posterior(x,state)
     map_models - floats         : List of MAP models in each state where Laplace approximation is evaluated.
                                     If optimize=True and a log_posterior() function is supplied, then
                                     scipy.minimize is used to find MAP models in each state using map_models as starting guesses.
-    log_posterior_args          : Optional list of additional arguments required by user function log_posterior.
     ensemble_per_state - floats : Optional list of posterior samples in each state, format [i][j][k],(i=1,...,n_samples;j=1,..., n_models;k=1,...,ndim[i]).
     log_posterior_ens - floats  : Optional list of log-posterior densities of samples in each state, format [i][j],(i=1,...,n_states;j=1,..., n_samples).
     optimize, bool              : Logical to decide whether to use optimization for MAP models (Only relevant if log_posterior()) function supplied.)
@@ -82,7 +79,8 @@ def run_laplace_evidence_approximation(
                 log_posterior_ens,
             )
         )
-    else:  # we are using the supplied log_posterior() function so need Hessian and MAp model
+    elif log_posterior is not None:
+        # we are using the supplied log_posterior() function so need Hessian and MAp model
         if verbose:
             if optimize:
                 print(
@@ -99,9 +97,12 @@ def run_laplace_evidence_approximation(
                 n_dims,
                 log_posterior,
                 map_models,
-                log_posterior_args=log_posterior_args,
                 optimize=optimize,
             )
+        )
+    else:
+        raise InputError(
+            msg="In function run_laplace_evidence_approximation: Either ensemble_per_state or log_posterior must be provided."
         )
 
     return (
@@ -149,9 +150,8 @@ def _from_ensemble(
 def _from_log_posterior(
     n_states: int,
     n_dims: list[int],
-    log_posterior: Callable,
+    log_posterior: MultiStateDensity,
     map_models: list[np.ndarray],
-    log_posterior_args: list[Any] = [],
     optimize: bool = False,
 ):
     """Calculate Laplace approximation from log-posterior function."""
@@ -160,9 +160,9 @@ def _from_log_posterior(
     map_log_posteriors = []
     log_marginal_likelihoods = []
     for state in range(n_states):
-        fun = lambda x: log_posterior(x, state, *log_posterior_args)
+        fun = lambda x: log_posterior(x, state)
         if optimize:
-            fun2 = lambda x: -log_posterior(x, state, *log_posterior_args)
+            fun2 = lambda x: -log_posterior(x, state)
             soln = minimize(fun2, map_models[state])
             map_model = soln.x
         else:

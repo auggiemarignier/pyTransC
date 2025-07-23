@@ -2,12 +2,13 @@
 
 import multiprocessing
 import random
-from collections.abc import Sequence
 from functools import partial
 from typing import Any, Callable
 
 import emcee
 import numpy as np
+
+from ..utils.types import MultiStateDensity
 
 
 def run_mcmc_per_state(
@@ -16,8 +17,7 @@ def run_mcmc_per_state(
     n_walkers: int | list[int],
     n_steps: int | list[int],
     pos: list[np.ndarray],
-    log_posterior: Callable[[np.ndarray, int], float],
-    log_posterior_args: Sequence[Any] = [],
+    log_posterior: MultiStateDensity,
     discard: int | list[int] = 0,
     thin: int | list[int] = 1,
     auto_thin: bool = False,
@@ -45,8 +45,7 @@ def run_mcmc_per_state(
     n_steps - int                : number of steps required per walker.
     pos - n_walkers*n_dims*float  : list of starting points of markov chains in each state.
     log_posterior - func        : user supplied function to evaluate the log-posterior density for the ith state at location x.
-                                    calling sequence log_posterior(x,i,*log_posterior_args)
-    log_posterior_args - list   : user defined list of additional arguments passed to log_posterior function (optional).
+                                    calling sequence log_posterior(x,i)
     discard - int, or list      : number of output samples to discard (default = 0). (Parameter passed to emcee, also known as `burnin'.)
     thin - int, or list         : frequency of output samples in output chains to accept (default = 1, i.e. all) (Parameter passed to emcee.)
     auto_thin - bool             : if True, ignores input thin value and instead thins the chain by the maximum auto_correlation time estimated (default = False).
@@ -99,8 +98,9 @@ def run_mcmc_per_state(
     log_posterior_ens: list[np.ndarray] = []
     auto_correlation: list[np.ndarray] = []
     for i in range(n_states):  # loop over states
+        _log_posterior = partial(log_posterior, state=i)
         _samples, _log_posterior_ens, _auto_corr = process_state(
-            log_posterior=lambda x, i=i: log_posterior(x, i, *log_posterior_args),
+            log_posterior=_log_posterior,
             n_walkers=n_walkers[i],
             n_dims=n_dims[i],
             pos=pos[i],
@@ -184,7 +184,7 @@ def process_state(
 def _perform_sampling(
     n_walkers: int,
     n_dim: int,
-    log_prob_func: Callable,
+    log_prob_func: Callable[[np.ndarray], float],
     initial_state: np.ndarray,
     n_steps: int,
     **kwargs,

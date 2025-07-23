@@ -8,7 +8,11 @@ from functools import partial
 import numpy as np
 from tqdm import tqdm
 
-from pytransc.utils.auto_pseudo import PseudoPrior
+from ..utils.types import (
+    MultiStateDensity,
+    ProposableMultiStateDensity,
+    SampleableMultiStateDensity,
+)
 
 
 def run_state_jump_sampler(  # Independent state MCMC sampler on product space with proposal equal to pseudo prior
@@ -18,12 +22,9 @@ def run_state_jump_sampler(  # Independent state MCMC sampler on product space w
     n_dims: list[int],
     pos,
     pos_state,
-    log_posterior,
-    log_pseudo_prior,
-    log_proposal,
-    log_posterior_args=[],
-    log_pseudo_prior_args=[],
-    log_proposal_args=[],
+    log_posterior: MultiStateDensity,
+    log_pseudo_prior: SampleableMultiStateDensity,
+    log_proposal: ProposableMultiStateDensity,
     prob_state=0.1,
     seed=61254557,
     parallel=False,
@@ -43,15 +44,13 @@ def run_state_jump_sampler(  # Independent state MCMC sampler on product space w
     pos - n_walkers*n_dims*float   : list of starting locations of markov chains in each state.
     pos_state - n_walkers*int     : list of starting states of markov chains in each state.
     log_posterior()              : user supplied function to evaluate the log-posterior density for the ith state at location x.
-                                    calling sequence log_posterior(x,i,*log_posterior_args)
+                                    calling sequence log_posterior(x,i)
     log_pseudo_prior()           : user supplied function to evaluate the log-pseudo-prior density for the ith state at location x.
-                                    calling sequence log_posterior(x,i,*log_posterior_args).
+                                    calling sequence log_posterior(x,i).
                                     NB: must be normalized over respective state spaces.
     log_proposal()               : user supplied function to generate random deviate for ith state
                                     calling sequence log_proposal(xc,i,*log_proposal_args), where xc is the current location of the chain (allows for relative proposals)
                                     This is only used for within state moves, and not for between state moves for which it is effectively replaced by the pseudo-prior.
-    log_posterior_args - list    : user defined (optional) list of additional arguments passed to log_posterior. See calling sequence above.
-    log_pseudo_prior_args - list : user defined (optional) list of additional arguments passed to log_pseudo_prior. See calling sequence above.
     log_proposal_args - list     : user defined (optional) list of additional arguments passed to log_proposal. See calling sequence above.
     prob_state - float           : probability of proposal a state change per step of Markov chain (otherwise a parameter change within current state is proposed)
     seed - int                   : random number seed
@@ -114,9 +113,6 @@ def run_state_jump_sampler(  # Independent state MCMC sampler on product space w
             log_posterior=log_posterior,
             log_pseudo_prior=log_pseudo_prior,
             log_proposal=log_proposal,
-            log_posterior_args=log_posterior_args,
-            log_pseudo_prior_args=log_pseudo_prior_args,
-            log_proposal_args=log_proposal_args,
             n_steps=n_steps,
             prob_state=prob_state,
             verbose=verbose,
@@ -154,9 +150,7 @@ def run_state_jump_sampler(  # Independent state MCMC sampler on product space w
                 [current_state, current_model],
                 log_posterior,
                 log_pseudo_prior,
-                log_posterior_args,
                 log_proposal,
-                log_proposal_args,
                 n_steps,
                 prob_state,
                 verbose,
@@ -194,12 +188,10 @@ def _my_range(progress: bool, length: int):
 
 def _mcmc_walker(
     n_states: int,
-    cstate_cmodel,
-    log_posterior,
-    log_pseudo_prior: PseudoPrior,
-    log_posterior_args,
-    log_proposal,
-    log_proposal_args,
+    cstate_cmodel: tuple[int, np.ndarray],
+    log_posterior: MultiStateDensity,
+    log_pseudo_prior: SampleableMultiStateDensity,
+    log_proposal: ProposableMultiStateDensity,
     n_steps,
     prob_state,
     verbose,
@@ -207,7 +199,7 @@ def _mcmc_walker(
     current_state, current_model = cstate_cmodel
     visits = np.zeros(n_states, dtype=int)
     log_posterior_current = log_posterior(
-        current_model, current_state, *log_posterior_args
+        current_model, current_state
     )  # initial log-posterior
     log_pseudo_prior_current = log_pseudo_prior(
         current_model, current_state
@@ -237,17 +229,16 @@ def _mcmc_walker(
             )  # log difference in pseduo-priors
 
         else:  # Choose to propose a new model within current state
-            proposed_state = np.copy(current_state)  # retain current state
+            proposed_state = int(np.copy(current_state))  # retain current state
             if verbose:
                 print("within state", current_state, " model change")
             within = True
             prop_within += 1
-            log_proposal_prob, proposed_model = log_proposal(
-                current_model, proposed_state, *log_proposal_args
-            )  # generate proposed model in current state and calculate log density ratio
+            proposed_model = log_proposal.propose(current_model, proposed_state)
+            log_proposal_prob = log_proposal(current_model, proposed_state)
 
         log_posterior_proposed = log_posterior(
-            proposed_model, proposed_state, *log_posterior_args
+            proposed_model, proposed_state
         )  # log posterior for proposed state
 
         log_proposal_ratio = (
