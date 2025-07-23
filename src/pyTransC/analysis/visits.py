@@ -1,7 +1,5 @@
 """Module to get the number of visits in a state."""
 
-from typing import Optional
-
 import emcee
 import numpy as np
 
@@ -13,14 +11,14 @@ def get_visits_to_states(  # calculate evolution of relative visits to each stat
     n_states: int,
     n_walkers: int,
     n_steps: int,
-    state_chain_tot: Optional[np.ndarray] = None,  # total state chain for all walkers
-    state_chain: Optional[np.ndarray] = None,  # state chain for each walker
+    state_chain_tot: np.ndarray | None = None,  # total state chain for all walkers
+    state_chain: np.ndarray | None = None,  # state chain for each walker
     discard=0,
     thin=1,
     normalize=False,
     flat=False,
     walker_average="median",
-    product_space_sampler: Optional[emcee.EnsembleSampler] = None,
+    product_space_sampler: emcee.EnsembleSampler | None = None,
 ):
     """
     Utility routine to retrieve proportion of visits to each state as a function of chain step, i.e. calculates the relative evidence/marginal Liklihoods of states.

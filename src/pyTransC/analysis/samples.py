@@ -1,7 +1,5 @@
 """Functions for obtaining samples from an ensemble."""
 
-from typing import Optional
-
 import emcee
 import numpy as np
 
@@ -12,11 +10,11 @@ def get_transc_samples(
     alg: str,
     n_states: int,
     n_dims: list[int],
-    n_samples: Optional[list[int]] = None,  # number of samples in each state
-    state_chain: Optional[np.ndarray] = None,
-    model_chain: Optional[np.ndarray] = None,
-    relative_marginal_likelihoods: Optional[np.ndarray] = None,
-    product_space_sampler: Optional[emcee.EnsembleSampler] = None,
+    n_samples: list[int] | None = None,  # number of samples in each state
+    state_chain: np.ndarray | None = None,
+    model_chain: np.ndarray | None = None,
+    relative_marginal_likelihoods: np.ndarray | None = None,
+    product_space_sampler: emcee.EnsembleSampler | None = None,
     ntd_samples=1000,
     discard=0,
     thin=1,

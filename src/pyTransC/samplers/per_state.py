@@ -2,8 +2,9 @@
 
 import multiprocessing
 import random
+from collections.abc import Callable
 from functools import partial
-from typing import Any, Callable
+from typing import Any
 
 import emcee
 import numpy as np
