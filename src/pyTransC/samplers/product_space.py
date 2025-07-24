@@ -2,7 +2,7 @@
 
 import multiprocessing
 import random
-import warnings
+from dataclasses import dataclass
 from functools import partial
 
 import emcee
@@ -11,22 +11,85 @@ import numpy as np
 from ..utils.types import MultiStateDensity
 
 
-def run_product_space_sampler(  # Independent state Metropolis algorithm sampling across product space. This is algorithm 'TransC-product-space'
+@dataclass
+class ProductSpace:
+    """Define the product space for TransC sampling."""
+
+    n_dims: list[int]
+
+    @property
+    def n_states(self) -> int:
+        """Number of states in the product space."""
+        return len(self.n_dims)
+
+    @property
+    def total_n_dim(self) -> int:
+        """Total number of dimensions in the product space.
+
+        Sum of dimensions of all states plus one for the state index.
+        """
+        return sum(self.n_dims) + 1
+
+    def model_vectors2product_space(
+        self,
+        state: int,
+        model_vectors: list[np.ndarray],
+    ) -> np.ndarray:
+        """Convert a list of model vectors to product space format with the selected state."""
+        if not (0 <= state < self.n_states):
+            raise ValueError(
+                f"State index {state} is out of bounds for product space with {self.n_states} states."
+            )
+        if any(
+            mv.size != expected_nd
+            for mv, expected_nd in zip(model_vectors, self.n_dims)
+        ):
+            raise ValueError(
+                "Model vectors do not match the dimensions of the product space."
+            )
+        return np.concatenate([[state], *model_vectors])
+
+    def product_space2model_vectors(
+        self,
+        product_space_vector: np.ndarray,
+    ) -> tuple[int, list[np.ndarray]]:
+        """Convert a product space vector back to a list of model vectors."""
+        if product_space_vector.size != self.total_n_dim:
+            raise ValueError(
+                f"Product space vector size {product_space_vector.size} does not match total dimensions {self.total_n_dim}."
+            )
+        state = self._clip_state_index(product_space_vector[0])
+
+        k = 1
+        model_vectors = []
+        for n_dim in self.n_dims:
+            model_vectors.append(product_space_vector[k : k + n_dim])
+            k += n_dim
+        return state, model_vectors
+
+    def _clip_state_index(self, state: float) -> int:
+        """Clip the state index to ensure it is within valid bounds.
+
+        The product space vector will in principle always have dtype=float, so we need to ensure the state index is an integer.
+        """
+        # np.rint rounds to the nearest integer. In the unlikely case of a tie, it rounds to the nearest even integer e.g. 2.5 -> 2.0 (round down) 3.5 -> 4.0 (round up)
+        # clip to valid state index range
+        return int(np.clip(np.rint(state), 0, self.n_states - 1))
+
+
+def run_product_space_sampler(
+    product_space: ProductSpace,
     n_walkers: int,
     n_steps: int,
-    n_states: int,
-    n_dims: list[int],
-    pos,
-    pos_state,
+    start_positions: list[np.ndarray],
+    start_states: list[int],
     log_posterior: MultiStateDensity,
     log_pseudo_prior: MultiStateDensity,
-    seed=61254557,
-    parallel=False,
-    n_processors=1,
-    progress=False,
-    suppress_warnings=False,  # bool to suppress warnings
-    my_pool=False,
-    skip_initial_state_check=False,
+    seed: int | None = 61254557,
+    parallel: bool = False,
+    n_processors: int = 1,
+    progress: bool = False,
+    skip_initial_state_check: bool = False,
     **kwargs,
 ) -> emcee.EnsembleSampler:
     """
@@ -47,8 +110,6 @@ def run_product_space_sampler(  # Independent state Metropolis algorithm samplin
     parallel - bool              : switch to make use of multiprocessing package to parallelize over walkers
     n_processors - int            : number of processors to distribute work across (if parallel=True, else ignored). Default = multiprocessing.cpu_count()/1 if parallel = True/False.
     progress - bool              : switch to report progress to standard out.
-    suppress_warnings - bool      : switch to suppress warnings.
-    my_pool - bool                : switch to use local multiprocessing pool for emcee (experimental feature not recommended)
     kwargs - dict                : dictionary of optional arguments passed to emcee.
 
     """
@@ -58,147 +119,48 @@ def run_product_space_sampler(  # Independent state Metropolis algorithm samplin
     if progress:
         print("\nRunning product space trans-C sampler")
         print("\nNumber of walkers               : ", n_walkers)
-        print("Number of states being sampled  : ", n_states)
-        print("Dimensions of each state        : ", n_dims)
+        print("Number of states being sampled  : ", product_space.n_states)
+        print("Dimensions of each state        : ", product_space.n_dims)
 
-    if parallel and not suppress_warnings:  # do some housekeeping checks
-        if n_walkers == 1:
-            warnings.warn(
-                " Parallel mode used but only a single walker specified. Nothing to parallelize over?"
-            )
+    if parallel:
+        if n_processors == 1:
+            n_processors = multiprocessing.cpu_count()
 
-    ndim_ps = np.sum(n_dims) + 1  # dimension of product space
+        pool = multiprocessing.Pool(processes=n_processors)
+    else:
+        pool = None
 
-    pos_ps = _model_vectors2product_space(
-        pos, pos_state, n_walkers, sum(n_dims), n_states
-    )  # convert initial walker positions to product space model vectors
+    pos_ps = _get_initial_product_space_positions(
+        n_walkers, start_states, start_positions, product_space
+    )
 
     log_func = partial(
-        _product_space_log_prob,
-        n_states=n_states,
-        n_dims=n_dims,
+        product_space_log_prob,
+        product_space=product_space,
         log_posterior=log_posterior,
         log_pseudo_prior=log_pseudo_prior,
     )
 
-    if parallel:
-        if n_processors == 1:
-            n_processors = (
-                multiprocessing.cpu_count()
-            )  # set number of processors equal to those available
-
-        if my_pool:  # try to run emcee myself on separate cores (doesn't make sense for emcee to do this as n_walkers > 2*ndim for performance)
-            chunksize = int(
-                np.ceil(n_walkers / n_processors)
-            )  # set work per0 processor
-            jobs = [pos_ps[i] for i in range(n_walkers)]  # input data for parallel jobs
-            print(" n_steps", n_steps)
-            func = partial(
-                _my_emcee,
-                n_steps=n_steps,
-                log_func=log_func,
-                n_dim=ndim_ps,
-                progress=progress,
-                kwargs=kwargs,
-            )
-            # return func,jobs,n_processors,chunksize
-            result = []
-            pool = multiprocessing.Pool(processes=n_processors)
-            res = pool.map(func, jobs, chunksize=chunksize)
-            result.append(res)
-            pool.close()
-            pool.join()
-            return result
-
-        else:  # use emcee in parallel
-            with multiprocessing.Pool() as pool:
-                sampler = emcee.EnsembleSampler(  # instantiate emcee class
-                    n_walkers, ndim_ps, log_func, pool=pool, **kwargs
-                )
-
-                sampler.run_mcmc(pos_ps, n_steps, progress=progress)  # run sampler
-
-    else:
-        sampler = emcee.EnsembleSampler(  # instantiate emcee class
-            n_walkers, ndim_ps, log_func, **kwargs
-        )
-
-        sampler.run_mcmc(
-            pos_ps,
-            n_steps,
-            progress=progress,
-            skip_initial_state_check=skip_initial_state_check,
-        )  # run sampler
-
+    sampler = emcee.EnsembleSampler(
+        n_walkers, product_space.total_n_dim, log_func, pool=pool, **kwargs
+    )
+    sampler.run_mcmc(
+        pos_ps,
+        n_steps,
+        progress=progress,
+        skip_initial_state_check=skip_initial_state_check,
+    )
     return sampler
 
 
-def _my_emcee(pos, n_steps, log_func, n_dim, progress, kwargs):
-    # instantiate emcee class with a single walker
-    sampler = emcee.EnsembleSampler(1, n_dim, log_func, **kwargs)
-    sampler.run_mcmc(pos, n_steps, progress=progress)  # run sampler
-
-    return sampler
-
-
-def _product_space_vector2model(
-    x: np.ndarray, n_states: int, n_dims: list[int]
-):  # convert a combined product space model space vector to model vector in each state
-    """
-    Internal utility routine to convert a single vector in product state format to a list of vectors of differing length one per state.
-
-    This routine is the inverse operation to routine '_model_vectors2product_space()'
-
-    Inputs:
-    x - float array or list : trans-C vectors in product space format. (length sum ndim[i], i=1,...,n_states)
-
-    Returns:
-    m - list of floats      : list of trans-C vectors one per state with format
-                                m[i][v[i]], (i=1,...,n_states) where i is the state and v[i] is a model vector in state i.
-
-    """
-    m = []
-    kk = 1
-    for k in range(n_states):
-        m.append(x[kk : kk + n_dims[k]])
-        kk += n_dims[k]
-    return m
-
-
-def _model_vectors2product_space(
-    m, states, n_walkers, ps_ndim: int, n_states: int
-):  # convert model space vectors in each state to product space vectors
-    """
-    Internal utility routine to convert a list of vectors of differing length one per state to a single vector in product state format.
-
-    This routine is the inverse operation to routine '_product_space_vector2model()' but over multiple walkers.
-
-    Inputs:
-    m - list of floats arrays      : list of trans-C vectors one per state with format
-                                        m[i][v[i]], (i=1,...,n_states) where i is the state and v[i] is a vector in state i.
-    states - n_walkers*int          : list of states for each walker/chain.
-    n_walkers - int                 : number of walkers.
-
-    Returns:
-    x - float array or list : trans-C vectors in product space format. (length = n_walkers*(1 + sum ndim[i], i=1,...,n_states))
-
-    """
-    x = np.zeros((n_walkers, ps_ndim + 1))
-    for j in range(n_walkers):
-        x[j, 0] = states[j]
-        x[j, 1:] = np.concatenate([m[i][j] for i in range(n_states)])
-    return x
-
-
-def _product_space_log_prob(
-    x,
-    n_states: int,
-    n_dims: list[int],
+def product_space_log_prob(
+    x: np.ndarray,
+    product_space: ProductSpace,
     log_posterior: MultiStateDensity,
     log_pseudo_prior: MultiStateDensity,
-):  # Calculate product space target PDF from posterior and pseudo-priors in each state
+):
     """
-    Internal utility routine to calculate the combined target density for product space vector i.e. sum of log posterior + log pseudo prior density of all states.
+    Calculate the combined target density for product space vector i.e. sum of log posterior + log pseudo prior density of all other states.
 
     here input vector is in product space format.
 
@@ -215,15 +177,37 @@ def _product_space_log_prob(
     x - float array or list : trans-C vectors in product space format. (length sum ndim[i], i=1,...,n_states)
 
     """
-    if x[0] < -0.5 or x[0] >= n_states - 0.5:
+    if x[0] < -0.5 or x[0] >= product_space.n_states - 0.5:
         return -np.inf
-    state = int(np.rint(x[0]))
-    state = int(np.min((state, n_states - 1)))
-    state = int(np.max((state, 0)))
-    m = _product_space_vector2model(x, n_states, n_dims)
+
+    state, m = product_space.product_space2model_vectors(x)
     log_prob = log_posterior(m[state], state)
-    for i in range(n_states):
+    for i in range(product_space.n_states):
         if i != state:
             new = log_pseudo_prior(m[i], i)
             log_prob += new
     return log_prob
+
+
+def _get_initial_product_space_positions(
+    n_walkers: int,
+    start_states: list[int],
+    start_positions: list[np.ndarray],
+    product_space: ProductSpace,
+) -> np.ndarray:
+    """Get start positions and states into product space format.
+
+    Args:
+        n_walkers (int): Number of walkers.
+        start_states (list[int]): List of starting states for each walker.
+        start_positions (list[np.ndarray]): List of starting positions for each walker.  Each list element is an array of model vectors for each state.  The indexing is start_positions[state][walker], so start_positions[0].shape = (n_walkers, n_dims[0]), start_positions[1].shape = (n_walkers, n_dims[1]), etc.
+        product_space (ProductSpace): The product space object.
+
+    Returns:
+        np.ndarray: The initial positions in product space format.
+    """
+    pos_ps = np.zeros((n_walkers, product_space.total_n_dim))
+    for walker, state in enumerate(start_states):
+        model_vectors = [start[walker] for start in start_positions]
+        pos_ps[walker] = product_space.model_vectors2product_space(state, model_vectors)
+    return pos_ps
