@@ -1,14 +1,14 @@
 """Product-Space Sampling for TransC."""
 
-import multiprocessing
 import random
 from dataclasses import dataclass
 from functools import partial
 
-import emcee
 import numpy as np
+from emcee import EnsembleSampler
 
 from ..utils.types import MultiStateDensity
+from ._emcee import perform_sampling_with_emcee
 
 
 @dataclass
@@ -89,9 +89,8 @@ def run_product_space_sampler(
     parallel: bool = False,
     n_processors: int = 1,
     progress: bool = False,
-    skip_initial_state_check: bool = False,
     **kwargs,
-) -> emcee.EnsembleSampler:
+) -> EnsembleSampler:
     """
     MCMC sampler over independent states using emcee fixed dimension sampler over trans-C product space.
 
@@ -122,14 +121,6 @@ def run_product_space_sampler(
         print("Number of states being sampled  : ", product_space.n_states)
         print("Dimensions of each state        : ", product_space.n_dims)
 
-    if parallel:
-        if n_processors == 1:
-            n_processors = multiprocessing.cpu_count()
-
-        pool = multiprocessing.Pool(processes=n_processors)
-    else:
-        pool = None
-
     pos_ps = _get_initial_product_space_positions(
         n_walkers, start_states, start_positions, product_space
     )
@@ -141,15 +132,17 @@ def run_product_space_sampler(
         log_pseudo_prior=log_pseudo_prior,
     )
 
-    sampler = emcee.EnsembleSampler(
-        n_walkers, product_space.total_n_dim, log_func, pool=pool, **kwargs
-    )
-    sampler.run_mcmc(
-        pos_ps,
-        n_steps,
+    sampler = perform_sampling_with_emcee(
+        log_prob_func=log_func,
+        n_walkers=n_walkers,
+        n_steps=n_steps,
+        initial_state=pos_ps,
+        parallel=parallel,
+        n_processors=n_processors,
         progress=progress,
-        skip_initial_state_check=skip_initial_state_check,
+        **kwargs,
     )
+
     return sampler
 
 

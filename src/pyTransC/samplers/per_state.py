@@ -1,15 +1,14 @@
 """Per-State MCMC Sampling."""
 
-import multiprocessing
 import random
 from collections.abc import Callable
 from functools import partial
 from typing import Any
 
-import emcee
 import numpy as np
 
 from ..utils.types import MultiStateDensity
+from ._emcee import perform_sampling_with_emcee
 
 
 def run_mcmc_per_state(
@@ -103,7 +102,6 @@ def run_mcmc_per_state(
         _samples, _log_posterior_ens, _auto_corr = process_state(
             log_posterior=_log_posterior,
             n_walkers=n_walkers[i],
-            n_dims=n_dims[i],
             pos=pos[i],
             n_steps=n_steps[i],
             discard=discard[i],
@@ -129,38 +127,26 @@ def run_mcmc_per_state(
 def process_state(
     log_posterior: Callable[[np.ndarray], float],
     n_walkers: int,
-    n_dims: int,
     pos: np.ndarray,
     n_steps: int,
     discard: int = 0,
     thin: int = 1,
     parallel: bool = False,
     n_processors: int = 1,
-    skip_initial_state_check: bool = False,
     verbose: bool = True,
     **kwargs: Any,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Get the posterior samples, log probabilities, and autocorrelation times for a single state."""
-    _sampling_func = partial(
-        _perform_sampling,
-        n_walkers=n_walkers,
-        n_dim=n_dims,
+    sampler = perform_sampling_with_emcee(
         log_prob_func=log_posterior,
-        initial_state=pos,
+        n_walkers=n_walkers,
         n_steps=n_steps,
+        initial_state=pos,
+        parallel=parallel,
+        n_processors=n_processors,
         progress=verbose,
-        skip_initial_state_check=skip_initial_state_check,
+        **kwargs,
     )
-    if parallel:
-        n_processors = (
-            multiprocessing.cpu_count() if n_processors == 1 else n_processors
-        )
-        with multiprocessing.Pool(processes=n_processors) as pool:
-            kwargs["pool"] = pool
-            sampler = _sampling_func(**kwargs)
-    else:
-        sampler = _sampling_func(**kwargs)
-
     samples = sampler.get_chain(discard=discard, thin=thin, flat=True)
     if samples is None:
         raise ValueError(
@@ -180,27 +166,6 @@ def process_state(
         )
 
     return samples, log_posterior_ens, autocorr_time
-
-
-def _perform_sampling(
-    n_walkers: int,
-    n_dim: int,
-    log_prob_func: Callable[[np.ndarray], float],
-    initial_state: np.ndarray,
-    n_steps: int,
-    **kwargs,
-) -> emcee.EnsembleSampler:
-    """Perform MCMC sampling using emcee."""
-
-    run_kwargs: dict[str, bool] = {}
-    if "progress" in kwargs:
-        run_kwargs["progress"] = kwargs.pop("progress")
-    if "skip_initial_state_check" in kwargs:
-        run_kwargs["skip_initial_state_check"] = kwargs.pop("skip_initial_state_check")
-
-    sampler = emcee.EnsembleSampler(n_walkers, n_dim, log_prob_func, **kwargs)
-    sampler.run_mcmc(initial_state, n_steps, **run_kwargs)
-    return sampler
 
 
 def _perform_auto_thinning(
