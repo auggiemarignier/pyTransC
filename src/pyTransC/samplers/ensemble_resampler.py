@@ -33,25 +33,15 @@ class EnsembleResamplerChain:
     """Data class to hold the results of the ensemble resampler."""
 
     n_states: int  # This could be inferred from state_chain assuming every state is visited at least once.  Requiring it at initialisation makes it more robust for downstream tasks.
-    member_chain: list[int] = field(default_factory=list)
-    state_chain: list[int] = field(default_factory=list)
-    n_proposed: int = 0
-    n_accepted: int = 0
+    member_chain: list[int] = field(default_factory=list, init=False)
+    state_chain: list[int] = field(default_factory=list, init=False)
+    n_proposed: int = field(default=0, init=False)
+    n_accepted: int = field(default=0, init=False)
 
     def __post_init__(self):
         """Post-initialization checks."""
         if not isinstance(self.n_states, int) or self.n_states <= 0:
             raise ValueError("n_states must be a positive integer.")
-        if len(self.member_chain) != len(self.state_chain):
-            raise ValueError("Member chain and state chain must have the same length.")
-        if len(self.state_chain) != self.n_steps:
-            raise ValueError(
-                "Total proposals must be equal to the length of the state and member chains."
-            )
-        if self.n_accepted > self.n_proposed:
-            raise ValueError(
-                "You somehow accepted more between-state proposals than you made."
-            )
 
     @property
     def state_chain_tot(self) -> list[list[int]]:

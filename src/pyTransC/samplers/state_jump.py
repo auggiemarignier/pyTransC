@@ -45,35 +45,17 @@ class StateJumpChain:
     """Dataclass to hold the results of the state jump sampler."""
 
     n_states: int  # This could be inferred from state_chain assuming every state is visited at least once.  Requiring it at initialisation makes it more robust for downstream tasks.
-    model_chain: list[np.ndarray] = field(default_factory=list)
-    state_chain: list[int] = field(default_factory=list)
-    accept_within: int = 0
-    prop_within: int = 0
-    accept_between: int = 0
-    prop_between: int = 0
+    model_chain: list[np.ndarray] = field(default_factory=list, init=False)
+    state_chain: list[int] = field(default_factory=list, init=False)
+    accept_within: int = field(default=0, init=False)
+    prop_within: int = field(default=0, init=False)
+    accept_between: int = field(default=0, init=False)
+    prop_between: int = field(default=0, init=False)
 
     def __post_init__(self):
         """Post-initialization checks."""
         if not isinstance(self.n_states, int) or self.n_states <= 0:
             raise ValueError("n_states must be a positive integer.")
-        if len(self.model_chain) != len(self.state_chain):
-            raise ValueError("Model chain and state chain must have the same length.")
-        if len(self.state_chain) != self.n_steps:
-            raise ValueError(
-                "Total proposals must be equal to the length of the state and model chains."
-            )
-        if self.prop_within < 0 or self.prop_between < 0:
-            raise ValueError("Proposals must be non-negative integers.")
-        if self.accept_within < 0 or self.accept_between < 0:
-            raise ValueError("Acceptances must be non-negative integers.")
-        if self.accept_within > self.prop_within:
-            raise ValueError(
-                "You somehow accepted more within-state proposals than you made."
-            )
-        if self.accept_between > self.prop_between:
-            raise ValueError(
-                "You somehow accepted more between-state proposals than you made."
-            )
 
     @property
     def state_chain_tot(self) -> list[list[int]]:
