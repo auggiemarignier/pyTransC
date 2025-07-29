@@ -1,7 +1,7 @@
 """Product-Space Sampling for TransC."""
 
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial
 
 import numpy as np
@@ -77,6 +77,110 @@ class ProductSpace:
         return int(np.clip(np.rint(state), 0, self.n_states - 1))
 
 
+def _get_states_from_emcee_sampler(
+    product_space_sampler: EnsembleSampler,
+) -> list[list[int]]:
+    """Get the states from the emcee sampler."""
+    chain = product_space_sampler.get_chain()
+    if chain is None or chain.size == 0:
+        raise ValueError("The sampler chain is empty or not initialized.")
+    state_chain = chain[:, :, 0]
+    return np.rint(state_chain).astype("int").tolist()
+
+
+def _get_models_from_emcee_sampler(
+    product_space_sampler: EnsembleSampler,
+    n_dims: list[int],
+) -> list[list[np.ndarray]]:
+    """Get the model vectors from the emcee sampler."""
+    samples = product_space_sampler.get_chain()
+    if samples is None or samples.size == 0:
+        raise ValueError("The sampler chain is empty or not initialized.")
+
+    ind1 = np.cumsum(n_dims) + 1
+    ind0 = np.append(np.array([1]), ind1)
+
+    state_chain = np.rint(samples[:, :, 0]).astype("int")
+    n_steps, n_walkers = np.shape(state_chain)
+    model_chain = []
+    for i in range(n_steps):
+        m = []
+        for j in range(n_walkers):
+            m.append(
+                samples[
+                    i,
+                    j,
+                    ind0[state_chain[i, j]] : ind1[state_chain[i, j]],
+                ]
+            )
+        model_chain.append(m)
+
+    return model_chain
+
+
+@dataclass(init=False)
+class MultiWalkerProductSpaceChain:
+    """Data class to hold the results of the product space sampler.
+
+    This will basically wrap emcee's EnsembleSampler and provide a more convenient interface for accessing the results that is more consistent with the rest of pyTransC.
+
+    This class can only be initialised using the `from_emcee` class method, which will extract the necessary information from an `emcee.EnsembleSampler` instance.
+    """
+
+    n_states: int
+    model_chain: list[list[np.ndarray]] = field(default_factory=list)
+    state_chain: list[list[int]] = field(default_factory=list)
+
+    @classmethod
+    def from_emcee(
+        cls,
+        emcee_sampler: EnsembleSampler,
+        n_dims: list[int],
+    ) -> "MultiWalkerProductSpaceChain":
+        """Create a ProductSpaceChain from an emcee EnsembleSampler."""
+        state_chain = _get_states_from_emcee_sampler(emcee_sampler)
+        model_chain = _get_models_from_emcee_sampler(emcee_sampler, n_dims)
+        n_states = len(n_dims)
+        obj = cls.__new__(cls)  # Bypass __init__, since we use init=False
+        obj.n_states = n_states
+        obj.model_chain = model_chain
+        obj.state_chain = state_chain
+        return obj
+
+    @property
+    def n_walkers(self) -> int:
+        """Number of walkers in the chain."""
+        if not self.model_chain:
+            return 0
+        return len(self.state_chain[0])
+
+    @property
+    def n_steps(self) -> int:
+        """Number of steps in the chain."""
+        return len(self.state_chain)
+
+    @property
+    def state_chain_tot(self) -> np.ndarray:
+        """Cumulative state visit counts for each walker over time.
+
+        Returns:
+            np.ndarray: Array of shape (n_steps, n_walkers, n_states) where each entry [i, j, k]
+                        is the number of times walker j has visited state k up to step i.
+        """
+        n_steps = self.n_steps
+        n_walkers = self.n_walkers
+        n_states = self.n_states
+        counts = np.zeros((n_steps, n_walkers, n_states), dtype=int)
+
+        for w in range(n_walkers):
+            visits = np.zeros(n_states, dtype=int)
+            for t in range(n_steps):
+                state = self.state_chain[t][w]
+                visits[state] += 1
+                counts[t, w] = visits.copy()
+        return counts
+
+
 def run_product_space_sampler(
     product_space: ProductSpace,
     n_walkers: int,
@@ -90,7 +194,7 @@ def run_product_space_sampler(
     n_processors: int = 1,
     progress: bool = False,
     **kwargs,
-) -> EnsembleSampler:
+) -> MultiWalkerProductSpaceChain:
     """
     MCMC sampler over independent states using emcee fixed dimension sampler over trans-C product space.
 
@@ -143,7 +247,7 @@ def run_product_space_sampler(
         **kwargs,
     )
 
-    return sampler
+    return MultiWalkerProductSpaceChain.from_emcee(sampler, product_space.n_dims)
 
 
 def product_space_log_prob(
