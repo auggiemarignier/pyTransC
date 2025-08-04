@@ -1,13 +1,17 @@
 """Product-Space Sampling for TransC."""
 
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import partial
 
 import numpy as np
 from emcee import EnsembleSampler
 
-from ..utils.types import MultiStateDensity
+from ..utils.types import (
+    MultiStateDensity,
+    MultiWalkerModelChain,
+    MultiWalkerStateChain,
+)
 from ._emcee import perform_sampling_with_emcee
 
 
@@ -79,19 +83,19 @@ class ProductSpace:
 
 def _get_states_from_emcee_sampler(
     product_space_sampler: EnsembleSampler,
-) -> list[list[int]]:
+) -> MultiWalkerStateChain:
     """Get the states from the emcee sampler."""
     chain = product_space_sampler.get_chain()
     if chain is None or chain.size == 0:
         raise ValueError("The sampler chain is empty or not initialized.")
-    state_chain = chain[:, :, 0]
-    return np.rint(state_chain).astype("int").tolist()
+    state_chain = chain[:, :, 0].T
+    return np.rint(state_chain).astype("int")
 
 
 def _get_models_from_emcee_sampler(
     product_space_sampler: EnsembleSampler,
     n_dims: list[int],
-) -> list[list[np.ndarray]]:
+) -> MultiWalkerModelChain:
     """Get the model vectors from the emcee sampler."""
     samples = product_space_sampler.get_chain()
     if samples is None or samples.size == 0:
@@ -100,16 +104,16 @@ def _get_models_from_emcee_sampler(
     ind1 = np.cumsum(n_dims) + 1
     ind0 = np.append(np.array([1]), ind1)
 
-    state_chain = np.rint(samples[:, :, 0]).astype("int")
-    n_steps, n_walkers = np.shape(state_chain)
+    state_chain = np.rint(samples[:, :, 0].T).astype("int")
+    n_walkers, n_steps = np.shape(state_chain)
     model_chain = []
-    for i in range(n_steps):
+    for i in range(n_walkers):
         m = []
-        for j in range(n_walkers):
+        for j in range(n_steps):
             m.append(
                 samples[
-                    i,
                     j,
+                    i,
                     ind0[state_chain[i, j]] : ind1[state_chain[i, j]],
                 ]
             )
@@ -127,9 +131,9 @@ class MultiWalkerProductSpaceChain:
     This class can only be initialised using the `from_emcee` class method, which will extract the necessary information from an `emcee.EnsembleSampler` instance.
     """
 
-    n_states: int
-    model_chain: list[list[np.ndarray]] = field(default_factory=list)
-    state_chain: list[list[int]] = field(default_factory=list)
+    _n_states: int
+    _model_chain: MultiWalkerModelChain
+    _state_chain: MultiWalkerStateChain
 
     @classmethod
     def from_emcee(
@@ -142,43 +146,64 @@ class MultiWalkerProductSpaceChain:
         model_chain = _get_models_from_emcee_sampler(emcee_sampler, n_dims)
         n_states = len(n_dims)
         obj = cls.__new__(cls)  # Bypass __init__, since we use init=False
-        obj.n_states = n_states
-        obj.model_chain = model_chain
-        obj.state_chain = state_chain
+        obj._n_states = n_states
+        obj._model_chain = model_chain
+        obj._state_chain = state_chain
         return obj
+
+    def __repr__(self) -> str:
+        """String representation of the MultiWalkerProductSpaceChain."""
+        return (
+            f"MultiWalkerProductSpaceChain(n_walkers={self.n_walkers}, "
+            f"n_steps={self.n_steps}, n_states={self.n_states})"
+        )
 
     @property
     def n_walkers(self) -> int:
         """Number of walkers in the chain."""
         if not self.model_chain:
             return 0
-        return len(self.state_chain[0])
+        return self.state_chain.shape[0]
+
+    @property
+    def n_states(self) -> int:
+        """Number of states in the chain."""
+        return self._n_states
 
     @property
     def n_steps(self) -> int:
         """Number of steps in the chain."""
-        return len(self.state_chain)
+        return self.state_chain.shape[1]
+
+    @property
+    def model_chain(self) -> MultiWalkerModelChain:
+        """Model chain for each walker.
+
+        Expected shape is (n_walkers, n_steps, n_dims).
+        """
+        return self._model_chain
+
+    @property
+    def state_chain(self) -> MultiWalkerStateChain:
+        """State chain for each walker.
+
+        Expected shape is (n_walkers, n_steps, n_dims).
+        """
+        return np.array(self._state_chain)
 
     @property
     def state_chain_tot(self) -> np.ndarray:
         """Cumulative state visit counts for each walker over time.
 
         Returns:
-            np.ndarray: Array of shape (n_steps, n_walkers, n_states) where each entry [i, j, k]
+            np.ndarray: Array of shape (n_walkers, n_steps, n_states) where each entry [i, j, k]
                         is the number of times walker j has visited state k up to step i.
         """
-        n_steps = self.n_steps
-        n_walkers = self.n_walkers
-        n_states = self.n_states
-        counts = np.zeros((n_steps, n_walkers, n_states), dtype=int)
+        visits = np.zeros((self.n_walkers, self.n_steps, self.n_states))
+        for i in range(self.n_states):
+            visits[:, :, i] = np.cumsum(self.state_chain == i, axis=1)
 
-        for w in range(n_walkers):
-            visits = np.zeros(n_states, dtype=int)
-            for t in range(n_steps):
-                state = self.state_chain[t][w]
-                visits[state] += 1
-                counts[t, w] = visits.copy()
-        return counts
+        return visits
 
 
 def run_product_space_sampler(

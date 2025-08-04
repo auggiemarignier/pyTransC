@@ -19,23 +19,27 @@ def chain() -> StateJumpChain:
     """Fixture to create a Chain instance for testing."""
     rng = np.random.default_rng(42)
 
-    state_chain = [0, 1, 0, 2, 1, 4]
+    state_chain = [0, 1, 0, 2, 1, 4]  # all proposals are between states
     n_dims = [state + 1 for state in state_chain]
     model_chain = [rng.random(n_dim) for n_dim in n_dims]
-    accept_within = 1
-    prop_within = 2
-    accept_between = 3
-    prop_between = len(state_chain) - prop_within
 
-    chain = StateJumpChain(
-        n_states=5,
-        model_chain=model_chain,
-        state_chain=state_chain,
-        accept_within=accept_within,
-        prop_within=prop_within,
-        accept_between=accept_between,
-        prop_between=prop_between,
-    )
+    chain = StateJumpChain(n_states=5)
+    accept = True  # accept all proposals for testing
+
+    # The initial sample doesn't actually get added to the chain
+    # as there is no "proposal", as such.
+    # Creating an initial sample such that the first proposal is a "within state" proposal.
+    previous_state = 0
+
+    for state, model in zip(state_chain, model_chain):
+        sample = Sample(model=model, state=state)
+        proposal = (
+            ProposalType.WITHIN_STATE
+            if state == previous_state
+            else ProposalType.BETWEEN_STATE
+        )
+        update_chain(chain, sample, proposal, accept)
+        previous_state = state
 
     return chain
 
@@ -63,29 +67,6 @@ def test_chain_n_steps(chain: StateJumpChain) -> None:
     """Test the number of steps is correctly calculated."""
 
     assert chain.n_steps == 6
-
-
-def test_chain_consistent_lengths() -> None:
-    """Test that the model_chain and state_chain have consistent lengths."""
-
-    with pytest.raises(
-        ValueError, match="Model chain and state chain must have the same length."
-    ):
-        StateJumpChain(
-            n_states=5,
-            model_chain=[np.array([1.0])],
-            state_chain=[0, 1],
-        )
-
-
-def test_chain_total_proposals() -> None:
-    """Test that the length of the chains is consistent with the total proposals."""
-
-    with pytest.raises(
-        ValueError,
-        match="Total proposals must be equal to the length of the state and model chains.",
-    ):
-        StateJumpChain(n_states=5, prop_within=3)
 
 
 def test_chain_state_chain_tot(chain: StateJumpChain) -> None:
@@ -273,7 +254,7 @@ def test_multi_walker_chain_prop_within(
 ) -> None:
     """Test the prop_within property of MultiWalkerStateJumpChain."""
 
-    assert np.array_equal(multi_walker_chain.prop_within, [2] * 3)
+    assert np.array_equal(multi_walker_chain.prop_within, [1] * 3)
 
 
 def test_multi_walker_chain_accept_between(
@@ -281,7 +262,7 @@ def test_multi_walker_chain_accept_between(
 ) -> None:
     """Test the accept_between property of MultiWalkerStateJumpChain."""
 
-    assert np.array_equal(multi_walker_chain.accept_between, [3] * 3)
+    assert np.array_equal(multi_walker_chain.accept_between, [5] * 3)
 
 
 def test_multi_walker_chain_prop_between(
@@ -289,4 +270,4 @@ def test_multi_walker_chain_prop_between(
 ) -> None:
     """Test the prop_between property of MultiWalkerStateJumpChain."""
 
-    assert np.array_equal(multi_walker_chain.prop_between, [4] * 3)
+    assert np.array_equal(multi_walker_chain.prop_between, [5] * 3)

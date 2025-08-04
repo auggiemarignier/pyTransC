@@ -13,6 +13,8 @@ from tqdm import tqdm
 
 from ..utils.types import (
     MultiStateDensity,
+    MultiWalkerModelChain,
+    MultiWalkerStateChain,
     ProposableMultiStateDensity,
     SampleableMultiStateDensity,
 )
@@ -51,6 +53,10 @@ class StateJumpChain:
     prop_within: int = field(default=0, init=False)
     accept_between: int = field(default=0, init=False)
     prop_between: int = field(default=0, init=False)
+
+    def __repr__(self):
+        """String representation of the state jump chain."""
+        return f"StateJumpChain(n_states={self.n_states}, n_steps={self.n_steps})"
 
     def __post_init__(self):
         """Post-initialization checks."""
@@ -105,6 +111,13 @@ class MultiWalkerStateJumpChain:
 
     chains: list[StateJumpChain] = field(default_factory=list)
 
+    def __repr__(self):
+        """String representation of the multi-walker state jump chain."""
+        return (
+            f"MultiWalkerStateJumpChain(n_walkers={self.n_walkers}, "
+            f"n_states={self.n_states}, n_steps={self.n_steps})"
+        )
+
     def __post_init__(self):
         """Post-initialization checks."""
         if not self.chains:
@@ -131,12 +144,20 @@ class MultiWalkerStateJumpChain:
         return 0
 
     @property
-    def model_chain(self) -> list[list[np.ndarray]]:
+    def n_steps(self) -> int:
+        """Total number of steps across all walkers."""
+        if self.chains:
+            # assuming all chains have the same number of steps
+            return self.chains[0].n_steps
+        return 0
+
+    @property
+    def model_chain(self) -> MultiWalkerModelChain:
         """Concatenated model chain from all walkers."""
         return [chain.model_chain for chain in self.chains]
 
     @property
-    def state_chain(self) -> np.ndarray:
+    def state_chain(self) -> MultiWalkerStateChain:
         """Concatenated state chain from all walkers."""
         return np.array([chain.state_chain for chain in self.chains])
 

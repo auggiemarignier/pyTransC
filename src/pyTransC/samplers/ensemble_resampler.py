@@ -220,6 +220,7 @@ def run_ensemble_resampler(  # Independent state Marginal Likelihoods from pre-c
             log_posterior_ens,
             log_pseudo_prior_ens,
             state_proposal_weights=_state_proposal_weights,
+            progress=progress,
         )
 
     return MultiWalkerEnsembleResamplerChain(chains)

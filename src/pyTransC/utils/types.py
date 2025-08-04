@@ -1,8 +1,20 @@
 """Custom types for pytransc."""
 
-from typing import Protocol
+from typing import Annotated, Protocol, TypeAlias
 
 import numpy as np
+
+# See https://medium.com/data-science-collective/do-more-with-numpy-array-type-hints-annotate-validate-shape-dtype-09f81c496746
+# for guidance on numpy type annotations.
+Int2DArray: TypeAlias = np.ndarray[tuple[int, int], np.dtype[np.integer]]
+Float1DArray: TypeAlias = np.ndarray[tuple[int], np.dtype[np.floating]]
+FloatNDArray: TypeAlias = np.ndarray[tuple[int, ...], np.dtype[np.floating]]
+MultiWalkerStateChain: TypeAlias = Annotated[Int2DArray, "(n_walkers, n_steps)"]
+MultiWalkerModelChain: TypeAlias = Annotated[
+    list[list[Float1DArray]],
+    "(n_walkers, n_steps, n_dims[state_i])",
+]
+StateOrderedEnsemble: TypeAlias = list[FloatNDArray]
 
 
 class MultiStateDensity(Protocol):
@@ -73,4 +85,44 @@ class ProposableMultiStateDensity(MultiStateDensity, Protocol):
         new_model : np.ndarray
             The proposed new model index.
         """
+        ...
+
+
+class MultiStateMultiWalkerResult(Protocol):
+    """Protocol for the result of a multi-state multi-walker sampler."""
+
+    @property
+    def state_chain(self) -> MultiWalkerStateChain:
+        """State chain for each walker.
+
+        Expected shape is (n_walkers, n_steps).
+        """
+        ...
+
+    @property
+    def model_chain(self) -> MultiWalkerModelChain:
+        """Model chain for each walker.
+
+        Expected shape is (n_walkers, n_steps, n_dims).
+        """
+        ...
+
+    @property
+    def state_chain_tot(self) -> np.ndarray:
+        """Running totals of states visited along the Markov chains."""
+        ...
+
+    @property
+    def n_walkers(self) -> int:
+        """Number of walkers in the sampler."""
+        ...
+
+    @property
+    def n_steps(self) -> int:
+        """Number of steps in the sampler."""
+        ...
+
+    @property
+    def n_states(self) -> int:
+        """Number of states in the sampler."""
         ...
