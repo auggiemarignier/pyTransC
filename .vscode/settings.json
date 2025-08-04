@@ -18,11 +18,14 @@
         "autocorr",
         "burnin",
         "fardal",
+        "Juerg",
         "mcint",
         "ndarray",
         "prob",
         "Proposable",
+        "pytransc",
         "resampler",
+        "Sambridge",
         "Sampleable",
         "transc"
     ]
