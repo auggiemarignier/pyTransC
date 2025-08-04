@@ -7,8 +7,8 @@ import numpy as np
 from scipy import stats
 from sklearn.mixture import GaussianMixture
 
-from ..exceptions import InputError
 from ..samplers.per_state import run_mcmc_per_state
+from .exceptions import InputError
 from .types import MultiStateDensity, SampleableMultiStateDensity
 
 

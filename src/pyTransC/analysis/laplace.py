@@ -4,7 +4,7 @@ import numdifftools as nd
 import numpy as np
 from scipy.optimize import minimize
 
-from ..exceptions import InputError
+from ..utils.exceptions import InputError
 from ..utils.types import MultiStateDensity
 
 
