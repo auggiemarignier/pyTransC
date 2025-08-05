@@ -9,6 +9,8 @@ from functools import partial
 import numpy as np
 from tqdm import tqdm
 
+from ..utils.types import Int2DArray, StateOrderedEnsemble
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -44,15 +46,14 @@ class EnsembleResamplerChain:
             raise ValueError("n_states must be a positive integer.")
 
     @property
-    def state_chain_tot(self) -> list[list[int]]:
+    def state_chain_tot(self) -> Int2DArray:
         """Running cumulative tally of states visited."""
 
-        state_chain_tot: list[list[int]] = []
-        visits: list[int] = [0] * self.n_states
-        for state in self.state_chain:
-            visits[state] += 1
-            state_chain_tot.append(visits.copy())
-        return state_chain_tot
+        from ._utils import count_visits_to_states
+
+        return count_visits_to_states(
+            np.array(self.state_chain, dtype=int), self.n_states
+        )
 
     @property
     def n_steps(self) -> int:
@@ -140,8 +141,8 @@ def run_ensemble_resampler(  # Independent state Marginal Likelihoods from pre-c
     n_steps,
     n_states: int,
     n_dims: list[int],
-    log_posterior_ens,
-    log_pseudo_prior_ens,
+    log_posterior_ens: StateOrderedEnsemble,
+    log_pseudo_prior_ens: StateOrderedEnsemble,
     seed=61254557,
     parallel=False,
     n_processors=1,
@@ -231,8 +232,8 @@ def _run_mcmc_walker_parallel(
     n_states: int,
     n_samples: list[int],
     n_steps: int,
-    log_posterior_ens: list[list[float]],
-    log_pseudo_prior_ens: list[list[float]],
+    log_posterior_ens: StateOrderedEnsemble,
+    log_pseudo_prior_ens: StateOrderedEnsemble,
     state_proposal_weights: list[list[float]],
     n_processors: int = 1,
     progress: bool = False,
@@ -284,8 +285,8 @@ def _run_mcmc_walker_serial(
     n_states: int,
     n_samples: list[int],
     n_steps: int,
-    log_posterior_ens: list[list[float]],
-    log_pseudo_prior_ens: list[list[float]],
+    log_posterior_ens: StateOrderedEnsemble,
+    log_pseudo_prior_ens: StateOrderedEnsemble,
     state_proposal_weights: list[list[float]],
     progress: bool = False,
 ) -> list[EnsembleResamplerChain]:
@@ -315,8 +316,8 @@ def _mcmc_walker(
     n_samples: list[int],
     current_state,
     n_steps,
-    log_posterior_ens,
-    log_pseudo_prior_ens,
+    log_posterior_ens: StateOrderedEnsemble,
+    log_pseudo_prior_ens: StateOrderedEnsemble,
     state_proposal_weights: list[list[float]],
 ):
     """Internal one chain MCMC sampler used by run_ensemble_resampler()."""
@@ -344,8 +345,8 @@ def _chain_step(
     n_states: int,
     n_samples: list[int],
     current: Sample,
-    log_posterior_ens: list[list[float]],
-    log_pseudo_prior_ens: list[list[float]],
+    log_posterior_ens: StateOrderedEnsemble,
+    log_pseudo_prior_ens: StateOrderedEnsemble,
     state_proposal_weights: list[list[float]],  # 2D q(k|k') matrix
 ) -> tuple[Sample, bool]:
     proposed = _propose_sample(
@@ -404,8 +405,8 @@ def _propose_member_in_state(n_samples: int) -> int:
 
 def _log_prob_sample(
     sample: Sample,
-    log_posterior_ens: list[list[float]],
-    log_pseudo_prior_ens: list[list[float]],
+    log_posterior_ens: StateOrderedEnsemble,
+    log_pseudo_prior_ens: StateOrderedEnsemble,
 ) -> float:
     """Calculate the log probability of a sample."""
     return (

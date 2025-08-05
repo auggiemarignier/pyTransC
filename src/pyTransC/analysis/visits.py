@@ -97,7 +97,7 @@ def count_total_state_changes(
     Returns:
     int : total number of state changes
     """
-    return np.sum(count_state_changes(state_chain, discard, thin))
+    return int(np.sum(count_state_changes(state_chain, discard, thin)))
 
 
 def get_acceptance_rate_between_states(
@@ -137,7 +137,7 @@ def get_autocorr_between_state_jumps(state_chain: MultiWalkerStateChain) -> floa
     Returns:
     float : autocorrelation time for between state jumps
     """
-    return autocorr_fardal(np.array(state_chain))
+    return autocorr_fardal(state_chain)
 
 
 walker_average_functions = {
@@ -151,7 +151,7 @@ def get_relative_marginal_likelihoods(
         np.ndarray[tuple[int, int], np.dtype[np.integer]], "n_walkers, n_states"
     ],
     walker_average: str = "mean",
-) -> list[float]:
+) -> np.ndarray[tuple[int], np.dtype[np.floating]]:
     """
     Get the relative marginal likelihoods from the state chain.
 

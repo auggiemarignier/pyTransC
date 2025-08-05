@@ -6,6 +6,9 @@ import numpy as np
 
 # See https://medium.com/data-science-collective/do-more-with-numpy-array-type-hints-annotate-validate-shape-dtype-09f81c496746
 # for guidance on numpy type annotations.
+# These types are not actually supported by type checkers, so this is more for documentation purposes.
+# Current numpy type annotations only specify the dtype, not the shape.
+Int1DArray: TypeAlias = np.ndarray[tuple[int], np.dtype[np.integer]]
 Int2DArray: TypeAlias = np.ndarray[tuple[int, int], np.dtype[np.integer]]
 Float1DArray: TypeAlias = np.ndarray[tuple[int], np.dtype[np.floating]]
 FloatNDArray: TypeAlias = np.ndarray[tuple[int, ...], np.dtype[np.floating]]

@@ -12,6 +12,7 @@ import numpy as np
 from tqdm import tqdm
 
 from ..utils.types import (
+    Int2DArray,
     MultiStateDensity,
     MultiWalkerModelChain,
     MultiWalkerStateChain,
@@ -64,15 +65,14 @@ class StateJumpChain:
             raise ValueError("n_states must be a positive integer.")
 
     @property
-    def state_chain_tot(self) -> list[list[int]]:
+    def state_chain_tot(self) -> Int2DArray:
         """Running cumulative tally of states visited."""
 
-        state_chain_tot: list[list[int]] = []
-        visits: list[int] = [0] * self.n_states
-        for state in self.state_chain:
-            visits[state] += 1
-            state_chain_tot.append(visits.copy())
-        return state_chain_tot
+        from ._utils import count_visits_to_states
+
+        return count_visits_to_states(
+            np.array(self.state_chain, dtype=int), self.n_states
+        )
 
     @property
     def n_steps(self) -> int:
