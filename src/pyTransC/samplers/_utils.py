@@ -2,19 +2,19 @@
 
 import numpy as np
 
-from pytransc.utils.types import Int1DArray, Int2DArray
+from ..utils.types import IntArray
 
 
 def count_visits_to_states(
-    state_chain: Int1DArray,
+    state_chain: IntArray,
     n_states: int,
-) -> Int2DArray:
+) -> IntArray:
     """
     Count the running total number of visits to each state in the state chain for a single walker.
 
     Parameters
     ----------
-    state_chain : np.ndarray
+    state_chain : IntArray
         The state chain for a single walker (shape: [n_steps]).
 
     n_states : int
@@ -22,7 +22,7 @@ def count_visits_to_states(
 
     Returns
     -------
-    counts : np.ndarray
+    counts : IntArray
         An array of shape (n_steps, n_states) containing the counts of visits to each state at each step.
     """
     n_steps = state_chain.shape[0]

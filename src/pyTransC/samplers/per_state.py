@@ -7,7 +7,7 @@ from typing import Any
 
 import numpy as np
 
-from ..utils.types import MultiStateDensity
+from ..utils.types import FloatArray, MultiStateDensity
 from ._emcee import perform_sampling_with_emcee
 
 
@@ -16,7 +16,7 @@ def run_mcmc_per_state(
     n_dims: list[int],
     n_walkers: int | list[int],
     n_steps: int | list[int],
-    pos: list[np.ndarray],
+    pos: list[FloatArray],
     log_posterior: MultiStateDensity,
     discard: int | list[int] = 0,
     thin: int | list[int] = 1,
@@ -27,47 +27,88 @@ def run_mcmc_per_state(
     skip_initial_state_check: bool = False,
     verbose: bool = True,
     **kwargs,
-) -> tuple[list[np.ndarray], list[np.ndarray]]:
-    """
-    Utility routine to run an MCMC sampler independently within each state.
+) -> tuple[list[FloatArray], list[FloatArray]]:
+    """Run independent MCMC sampling within each state.
 
-    Creates a set of ensembles of posterior samples for each state.
-    Makes use of emcee sampler for posterior sampling.
+    This utility function runs the emcee sampler independently within each state
+    to generate posterior ensembles. These ensembles can then be used as input
+    for ensemble resampling or for constructing pseudo-priors.
 
-    This function is for convenience only. Its creates an ensemble of posterior samples within each state which
-        - can serve as the input to run_ensemble_resampler()
-        - can be used to build an approximate normalized pseudo_prior with build_auto_pseudo_prior().
-    Alternatively, the user could supply their own ensembles in each state for these purposes,
-    or directly provide their on own log_pseudo_prior function as required.
+    Parameters
+    ----------
+    n_states : int
+        Number of independent states in the problem.
+    n_dims : list of int
+        List of parameter dimensions for each state.
+    n_walkers : int or list of int
+        Number of random walkers for the emcee sampler. If int, same number
+        is used for all states. If list, specifies walkers per state.
+    n_steps : int or list of int
+        Number of MCMC steps per walker. If int, same number is used for all
+        states. If list, specifies steps per state.
+    pos : list of FloatArray
+        Starting positions for each state. Each array should have shape
+        (n_walkers[state], n_dims[state]).
+    log_posterior : MultiStateDensity
+        Function to evaluate the log-posterior density at location x in state i.
+        Must have signature log_posterior(x, state) -> float.
+    discard : int or list of int, optional
+        Number of samples to discard as burn-in. If int, same value used for
+        all states. Default is 0.
+    thin : int or list of int, optional
+        Thinning factor for chains. If int, same value used for all states.
+        Default is 1 (no thinning).
+    auto_thin : bool, optional
+        If True, automatically thin chains based on autocorrelation time,
+        ignoring the `thin` parameter. Default is False.
+    seed : int, optional
+        Random number seed for reproducible results. Default is 61254557.
+    parallel : bool or list of bool, optional
+        Whether to use multiprocessing for parallel sampling. If bool, same
+        setting used for all states. Default is False.
+    n_processors : int, optional
+        Number of processors to use if parallel=True. Default is 1.
+    skip_initial_state_check : bool, optional
+        Whether to skip emcee's initial state check. Default is False.
+    verbose : bool, optional
+        Whether to print progress information. Default is True.
+    **kwargs
+        Additional keyword arguments passed to emcee.EnsembleSampler.
 
-    Inputs:
-    n_walkers - int, or list     : number of random walkers used by emcee sampler.
-    n_steps - int                : number of steps required per walker.
-    pos - n_walkers*n_dims*float  : list of starting points of markov chains in each state.
-    log_posterior - func        : user supplied function to evaluate the log-posterior density for the ith state at location x.
-                                    calling sequence log_posterior(x,i)
-    discard - int, or list      : number of output samples to discard (default = 0). (Parameter passed to emcee, also known as `burnin'.)
-    thin - int, or list         : frequency of output samples in output chains to accept (default = 1, i.e. all) (Parameter passed to emcee.)
-    auto_thin - bool             : if True, ignores input thin value and instead thins the chain by the maximum auto_correlation time estimated (default = False).
-    seed - int                  : random number seed
-    parallel - bool             : switch to make use of multiprocessing package to parallelize over walkers
-    n_processors - int           : number of processors to distribute work across (if parallel=True, else ignored).
-                                    Default = multiprocessing.cpu_count() if parallel = True, else 1 if False.
-    progress - bool             : switch to report progress of emcee to standard out. (Parameter passed to emcee.)
-    kwargs - dict               : dictionary of optional control parameters passed to emcee package to determine sampling behaviour.
+    Returns
+    -------
+    -------
+    ensemble_per_state : list of FloatArray
+        Posterior samples for each state. Each array has shape
+        (n_samples, n_dims[state]).
+    log_posterior_ens : list of FloatArray
+        Log posterior values for each ensemble. Each array has shape (n_samples,)
 
-    Returns:
-    log_posterior_ens - floats. : list of log-posterior densities of samples in each state, format [i][j],(i=1,...,n_states;j=1,..., n_walkers*n_samples).
-    ensemble_per_state - floats : list of posterior samples in each state, format [i][j][k],(i=1,...,n_states;j=1,..., n_walkers*n_samples;k=1,...,ndim[i]).
+    Notes
+    -----
+    This function is primarily a convenience wrapper around emcee for generating
+    posterior ensembles within each state independently. The resulting ensembles
+    can be used with:
 
+    - `run_ensemble_resampler()` for ensemble-based trans-dimensional sampling
+    - Automatic pseudo-prior construction functions
+    - Direct analysis of within-state posterior distributions
 
-    Attributes defined:
-    n_walkers - int              : number of random walkers per state
-    ensemble_per_state - floats : list of posterior samples in each state, format [i][j][k],(i=1,...,n_states;j=1,..., n_walkers*n_samples;k=1,...,ndim[i]).
-    n_samples - n_states*int      : list of number of samples in each state.
-    log_posterior_ens - floats. : list of log-posterior densities of samples in each state, format [i][j],(i=1,...,n_states;j=1,..., n_walkers*n_samples).
-    run_per_state - bool.       : bool to keep track of whether run_mcmc_per_state has been called.
+    If `auto_thin=True`, the function will automatically determine appropriate
+    burn-in and thinning based on the autocorrelation time, following emcee
+    best practices.
 
+    Examples
+    --------
+    >>> ensembles, log_probs = run_mcmc_per_state(
+    ...     n_states=2,
+    ...     n_dims=[3, 2],
+    ...     n_walkers=32,
+    ...     n_steps=1000,
+    ...     pos=[np.random.randn(32, 3), np.random.randn(32, 2)],
+    ...     log_posterior=my_log_posterior,
+    ...     auto_thin=True
+    ... )
     """
 
     random.seed(seed)
@@ -94,9 +135,9 @@ def run_mcmc_per_state(
         print("\nNumber of states being sampled: ", n_states)
         print("Dimensions of each state: ", n_dims)
 
-    samples: list[np.ndarray] = []
-    log_posterior_ens: list[np.ndarray] = []
-    auto_correlation: list[np.ndarray] = []
+    samples: list[FloatArray] = []
+    log_posterior_ens: list[FloatArray] = []
+    auto_correlation: list[FloatArray] = []
     for i in range(n_states):  # loop over states
         _log_posterior = partial(log_posterior, state=i)
         _samples, _log_posterior_ens, _auto_corr = process_state(
@@ -125,9 +166,9 @@ def run_mcmc_per_state(
 
 
 def process_state(
-    log_posterior: Callable[[np.ndarray], float],
+    log_posterior: Callable[[FloatArray], float],
     n_walkers: int,
-    pos: np.ndarray,
+    pos: FloatArray,
     n_steps: int,
     discard: int = 0,
     thin: int = 1,
@@ -135,7 +176,7 @@ def process_state(
     n_processors: int = 1,
     verbose: bool = True,
     **kwargs: Any,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[FloatArray, FloatArray, FloatArray]:
     """Get the posterior samples, log probabilities, and autocorrelation times for a single state."""
     sampler = perform_sampling_with_emcee(
         log_prob_func=log_posterior,
@@ -169,11 +210,11 @@ def process_state(
 
 
 def _perform_auto_thinning(
-    samples: list[np.ndarray],
-    log_posterior_ens: list[np.ndarray],
-    auto_correlation: list[np.ndarray],
+    samples: list[FloatArray],
+    log_posterior_ens: list[FloatArray],
+    auto_correlation: list[FloatArray],
     verbose: bool = False,
-) -> tuple[list[np.ndarray], list[np.ndarray]]:
+) -> tuple[list[FloatArray], list[FloatArray]]:
     """Perform auto thinning of samples based on autocorrelation times.
 
     Thin the chains using the maximum auto_correlation function for each state to get independent samples for fitting.

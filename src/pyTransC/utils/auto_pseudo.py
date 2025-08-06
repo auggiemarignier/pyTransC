@@ -9,7 +9,7 @@ from sklearn.mixture import GaussianMixture
 
 from ..samplers.per_state import run_mcmc_per_state
 from .exceptions import InputError
-from .types import MultiStateDensity, SampleableMultiStateDensity
+from .types import FloatArray, MultiStateDensity, SampleableMultiStateDensity
 
 
 class PseudoPriorBuilders(StrEnum):
@@ -24,7 +24,7 @@ class PseudoPriorBuilder(Protocol):
 
     def __call__(
         self,
-        ensemble_per_state: list[np.ndarray],
+        ensemble_per_state: list[FloatArray],
         *args: Any,
         **kwargs: Any,
     ) -> SampleableMultiStateDensity:
@@ -32,7 +32,7 @@ class PseudoPriorBuilder(Protocol):
         Build a pseudo-prior function based on the provided parameters.
 
         Args:
-            ensemble_per_state (list[np.ndarray]): List of ensembles for each state.  Each ensemble should be appropriately distributed.
+            ensemble_per_state (list[FloatArray]): List of ensembles for each state.  Each ensemble should be appropriately distributed.
             *args: Additional positional arguments.
             **kwargs: Additional keyword arguments.
 
@@ -44,13 +44,13 @@ class PseudoPriorBuilder(Protocol):
 class GaussianMixturePseudoPrior:
     """Class for Gaussian mixture pseudo-prior."""
 
-    def __init__(self, ensemble_per_state: list[np.ndarray], **kwargs):
+    def __init__(self, ensemble_per_state: list[FloatArray], **kwargs):
         """
         Initialize the Gaussian mixture pseudo-prior.
 
         Parameters
         ----------
-        ensemble_per_state : list of np.ndarray
+        ensemble_per_state : list of FloatArray
             List of ensembles for each state.
         kwargs : dict
             Additional arguments for Gaussian mixture fitting.
@@ -59,12 +59,12 @@ class GaussianMixturePseudoPrior:
             GaussianMixture(**kwargs).fit(ens) for ens in ensemble_per_state
         ]
 
-    def __call__(self, x: np.ndarray, state: int) -> float:
+    def __call__(self, x: FloatArray, state: int) -> float:
         """Evaluate the log pseudo-prior density."""
         gmm = self.gaussian_mixtures[state]
         return float(gmm.score([x]))
 
-    def draw_deviate(self, state: int) -> np.ndarray:
+    def draw_deviate(self, state: int) -> FloatArray:
         """Draw a random deviate from the pseudo-prior for a given state."""
         gmm = self.gaussian_mixtures[state]
         return gmm.sample()[0][0]
@@ -73,13 +73,13 @@ class GaussianMixturePseudoPrior:
 class MeanCovariancePseudoPrior:
     """Class for mean and covariance pseudo-prior."""
 
-    def __init__(self, ensemble_per_state: list[np.ndarray]):
+    def __init__(self, ensemble_per_state: list[FloatArray]):
         """
         Initialize the mean and covariance pseudo-prior.
 
         Parameters
         ----------
-        ensemble_per_state : list of np.ndarray
+        ensemble_per_state : list of FloatArray
             List of ensembles for each state.
         """
         self.rv_list = []
@@ -89,12 +89,12 @@ class MeanCovariancePseudoPrior:
             rv = stats.multivariate_normal(mean=pseudo_means_, cov=pseudo_covariances_)
             self.rv_list.append(rv)
 
-    def __call__(self, x: np.ndarray, state: int) -> float:
+    def __call__(self, x: FloatArray, state: int) -> float:
         """Evaluate the log pseudo-prior density."""
         rv = self.rv_list[state]
         return rv.logpdf(x)
 
-    def draw_deviate(self, state: int) -> np.ndarray:
+    def draw_deviate(self, state: int) -> FloatArray:
         """Draw a random deviate from the pseudo-prior for a given state."""
         rv = self.rv_list[state]
         return rv.rvs(size=1)[0]
@@ -109,7 +109,7 @@ pseudo_prior_factories: dict[PseudoPriorBuilders, PseudoPriorBuilder] = {
 def build_auto_pseudo_prior(
     pseudo_prior_type: PseudoPriorBuilders = PseudoPriorBuilders.GAUSSIAN_MIXTURE,
     *,
-    ensemble_per_state: list[np.ndarray] | None = None,
+    ensemble_per_state: list[FloatArray] | None = None,
     log_posterior: MultiStateDensity | None = None,
     sampling_args: dict[str, Any] = {},
     **builder_kwargs,
@@ -121,7 +121,7 @@ def build_auto_pseudo_prior(
     ----------
     pseudo_prior_type : PseudoPriorBuilders, optional
         Type of pseudo-prior builder to use. Default is GAUSSIAN_MIXTURE.
-    ensemble_per_state : list of np.ndarray, optional
+    ensemble_per_state : list of FloatArray, optional
         List of posterior samples for each state. If not provided, samples will be generated using MCMC.
     log_posterior : MultiStateDensity, optional
         Function evaluating the log-posterior for each state. Required if ensemble_per_state is not provided.

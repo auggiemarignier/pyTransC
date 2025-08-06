@@ -2,11 +2,13 @@
 
 import numpy as np
 
+from ..utils.types import FloatArray
+
 
 def run_ens_mcint(  #  Marginal Likelihoods from Monte Carlo integration
     n_states: int,
-    log_posterior_ens: list[np.ndarray],
-    log_pseudo_prior_ens: list[np.ndarray],
+    log_posterior_ens: list[FloatArray],
+    log_pseudo_prior_ens: list[FloatArray],
 ):
     """
     Utility routine to perform MCMC sampler over independent states using numerical integration.

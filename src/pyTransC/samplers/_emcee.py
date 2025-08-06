@@ -6,15 +6,16 @@ from multiprocessing import cpu_count
 from multiprocessing.pool import Pool
 from typing import Any
 
-import numpy as np
 from emcee import EnsembleSampler
+
+from ..utils.types import FloatArray
 
 
 def perform_sampling_with_emcee(
-    log_prob_func: Callable[[np.ndarray], float],
+    log_prob_func: Callable[[FloatArray], float],
     n_walkers: int,
     n_steps: int,
-    initial_state: np.ndarray,
+    initial_state: FloatArray,
     **kwargs,
 ) -> EnsembleSampler:
     """Perform MCMC sampling using emcee.

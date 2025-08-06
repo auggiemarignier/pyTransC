@@ -8,6 +8,8 @@ import numpy as np
 from emcee import EnsembleSampler
 
 from ..utils.types import (
+    FloatArray,
+    IntArray,
     MultiStateDensity,
     MultiWalkerModelChain,
     MultiWalkerStateChain,
@@ -37,8 +39,8 @@ class ProductSpace:
     def model_vectors2product_space(
         self,
         state: int,
-        model_vectors: list[np.ndarray],
-    ) -> np.ndarray:
+        model_vectors: list[FloatArray],
+    ) -> FloatArray:
         """Convert a list of model vectors to product space format with the selected state."""
         if not (0 <= state < self.n_states):
             raise ValueError(
@@ -55,8 +57,8 @@ class ProductSpace:
 
     def product_space2model_vectors(
         self,
-        product_space_vector: np.ndarray,
-    ) -> tuple[int, list[np.ndarray]]:
+        product_space_vector: FloatArray,
+    ) -> tuple[int, list[FloatArray]]:
         """Convert a product space vector back to a list of model vectors."""
         if product_space_vector.size != self.total_n_dim:
             raise ValueError(
@@ -192,14 +194,16 @@ class MultiWalkerProductSpaceChain:
         return np.array(self._state_chain)
 
     @property
-    def state_chain_tot(self) -> np.ndarray:
-        """Cumulative state visit counts for each walker over time.
+    def state_chain_tot(self) -> IntArray:
+        """Calculate cumulative state visit counts.
 
-        Returns:
-            np.ndarray: Array of shape (n_walkers, n_steps, n_states) where each entry [i, j, k]
+        Returns
+        -------
+        IntArray
+            Array of shape (n_walkers, n_steps, n_states) where each entry [i, j, k]
                         is the number of times walker j has visited state k up to step i.
         """
-        visits = np.zeros((self.n_walkers, self.n_steps, self.n_states))
+        visits = np.zeros((self.n_walkers, self.n_steps, self.n_states), dtype=int)
         for i in range(self.n_states):
             visits[:, :, i] = np.cumsum(self.state_chain == i, axis=1)
 
@@ -210,7 +214,7 @@ def run_product_space_sampler(
     product_space: ProductSpace,
     n_walkers: int,
     n_steps: int,
-    start_positions: list[np.ndarray],
+    start_positions: list[FloatArray],
     start_states: list[int],
     log_posterior: MultiStateDensity,
     log_pseudo_prior: MultiStateDensity,
@@ -220,26 +224,67 @@ def run_product_space_sampler(
     progress: bool = False,
     **kwargs,
 ) -> MultiWalkerProductSpaceChain:
-    """
-    MCMC sampler over independent states using emcee fixed dimension sampler over trans-C product space.
+    """Run MCMC sampler over independent states using emcee in trans-C product space.
 
-    Inputs:
-    n_walkers - int               : number of random walkers used by product_space sampler.
-    n_steps - int                 : number of steps required per walker.
-    pos - n_walkers*n_dims*float   : list of starting locations of markov chains in each state.
-    pos_state - n_walkers*int     : list of starting states of markov chains in each state.
-    log_posterior()              : user supplied function to evaluate the log-posterior density for the ith state at location x.
-                                   calling sequence log_posterior(x,i)
-    log_pseudo_prior()           : user supplied function to evaluate the log-pseudo-prior density for the ith state at location x.
-                                   calling sequence log_posterior(x,i).
-                                   NB: must be normalized over respective state spaces.
-    prob_state - float           : probability of proposal a state change per step of Markov chain (otherwise a parameter change within current state is proposed)
-    seed - int                   : random number seed
-    parallel - bool              : switch to make use of multiprocessing package to parallelize over walkers
-    n_processors - int            : number of processors to distribute work across (if parallel=True, else ignored). Default = multiprocessing.cpu_count()/1 if parallel = True/False.
-    progress - bool              : switch to report progress to standard out.
-    kwargs - dict                : dictionary of optional arguments passed to emcee.
+    This function implements trans-conceptual MCMC sampling by embedding all states
+    in a fixed-dimensional product space. The sampler uses the emcee ensemble sampler
+    to explore the combined parameter space of all states.
 
+    Parameters
+    ----------
+    product_space : ProductSpace
+        The product space definition containing state dimensions.
+    n_walkers : int
+        Number of random walkers used by the product space sampler.
+    n_steps : int
+        Number of MCMC steps required per walker.
+    start_positions : list of FloatArray
+        Starting positions for walkers, one array per walker containing the
+        initial parameter values for the starting state.
+    start_states : list of int
+        Starting state indices for each walker.
+    log_posterior : MultiStateDensity
+        Function to evaluate the log-posterior density at location x in state i.
+        Must have signature log_posterior(x, state) -> float.
+    log_pseudo_prior : MultiStateDensity
+        Function to evaluate the log-pseudo-prior density at location x in state i.
+        Must have signature log_pseudo_prior(x, state) -> float.
+        Note: Must be normalized over respective state spaces.
+    seed : int, optional
+        Random number seed for reproducible results. Default is 61254557.
+    parallel : bool, optional
+        Whether to use multiprocessing to parallelize over walkers. Default is False.
+    n_processors : int, optional
+        Number of processors to use if parallel=True. Default is 1.
+    progress : bool, optional
+        Whether to display progress information. Default is False.
+    **kwargs
+        Additional keyword arguments passed to the emcee sampler.
+
+    Returns
+    -------
+    MultiWalkerProductSpaceChain
+        Chain results containing state sequences, model parameters, and diagnostics
+        for all walkers.
+
+    Notes
+    -----
+    The product space approach embeds all possible states in a single fixed-dimensional
+    space. This allows the use of efficient ensemble samplers like emcee, but requires
+    sampling in a higher-dimensional space than any individual state.
+
+    Examples
+    --------
+    >>> ps = ProductSpace(n_dims=[2, 3, 1])
+    >>> results = run_product_space_sampler(
+    ...     product_space=ps,
+    ...     n_walkers=32,
+    ...     n_steps=1000,
+    ...     start_positions=[[0.5, 0.5], [1.0, 0.0, -1.0], [2.0]],
+    ...     start_states=[0, 1, 2],
+    ...     log_posterior=my_log_posterior,
+    ...     log_pseudo_prior=my_log_pseudo_prior
+    ... )
     """
 
     random.seed(seed)
@@ -276,7 +321,7 @@ def run_product_space_sampler(
 
 
 def product_space_log_prob(
-    x: np.ndarray,
+    x: FloatArray,
     product_space: ProductSpace,
     log_posterior: MultiStateDensity,
     log_pseudo_prior: MultiStateDensity,
@@ -314,19 +359,19 @@ def product_space_log_prob(
 def _get_initial_product_space_positions(
     n_walkers: int,
     start_states: list[int],
-    start_positions: list[np.ndarray],
+    start_positions: list[FloatArray],
     product_space: ProductSpace,
-) -> np.ndarray:
+) -> FloatArray:
     """Get start positions and states into product space format.
 
     Args:
         n_walkers (int): Number of walkers.
         start_states (list[int]): List of starting states for each walker.
-        start_positions (list[np.ndarray]): List of starting positions for each walker.  Each list element is an array of model vectors for each state.  The indexing is start_positions[state][walker], so start_positions[0].shape = (n_walkers, n_dims[0]), start_positions[1].shape = (n_walkers, n_dims[1]), etc.
+        start_positions (list[FloatArray]): List of starting positions for each walker.  Each list element is an array of model vectors for each state.  The indexing is start_positions[state][walker], so start_positions[0].shape = (n_walkers, n_dims[0]), start_positions[1].shape = (n_walkers, n_dims[1]), etc.
         product_space (ProductSpace): The product space object.
 
     Returns:
-        np.ndarray: The initial positions in product space format.
+        FloatArray: The initial positions in product space format.
     """
     pos_ps = np.zeros((n_walkers, product_space.total_n_dim))
     for walker, state in enumerate(start_states):

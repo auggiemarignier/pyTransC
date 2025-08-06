@@ -6,7 +6,12 @@ from typing import Annotated
 import numpy as np
 
 from ..utils.autocorr import autocorr_fardal
-from ..utils.types import MultiStateMultiWalkerResult, MultiWalkerStateChain
+from ..utils.types import (
+    FloatArray,
+    IntArray,
+    MultiStateMultiWalkerResult,
+    MultiWalkerStateChain,
+)
 
 
 def get_visits_to_states(  # calculate evolution of relative visits to each state along chain
@@ -15,35 +20,51 @@ def get_visits_to_states(  # calculate evolution of relative visits to each stat
     thin=1,
     normalize=False,
 ):
-    """
-    Utility routine to retrieve proportion of visits to each state as a function of chain step, i.e. calculates the relative evidence/marginal Liklihoods of states.
+    """Calculate state visit statistics from trans-dimensional MCMC chains.
 
-    Collects information from previously run sampler. Can be used to diagnose performance and convergence.
+    This function analyzes the state visitation patterns in trans-dimensional MCMC
+    chains to estimate relative marginal likelihoods and assess convergence.
 
-    Inputs:
-    discard - int               : number of output samples to discard (default = 0). (Also known as `burnin'.)
-    thin - int                  : frequency of output samples in output chains to accept (default = 1, i.e. all)
-    normalize - bool            : switch to calculate normalize relative evidence (True) or total visits to each state (False).
-    flat - bool                 : switch to flatten walkers to a single chain (True) or calculate properties per chain (False).
-                                    if false then information per chain can indicate whether some chains have not converged.
-    walker_average - string     : indicates type of average pf visit statistics to calculate per chain step. Options are: 'median' (default) or 'mean'.
-                                    'median' provides more diagnostics if a subset of chains have not converged and statistics are outliers.
-    return_samples - bool       : switch to (optionally) return a record of visits to states for each step of each chain.
+    Parameters
+    ----------
+    transc_sampler : MultiStateMultiWalkerResult
+        Results from a trans-dimensional MCMC sampler containing state chains
+        and cumulative visit counts.
+    discard : int, optional
+        Number of initial samples to discard as burn-in. Default is 0.
+    thin : int, optional
+        Thinning factor - use every `thin`-th sample. Default is 1 (no thinning).
+    normalize : bool, optional
+        Whether to normalize visit counts to get proportions. If False, returns
+        raw visit counts. Default is False.
 
-    Returns:
-    visits - list int           : distribution of states visited as a function of chain step.
-                                    either per chain (flat=False), or overall (flat=True).
-                                    either normalized (normalize=True) or raw numbers (normalize=False).
-                                    size equal to number of Markov chain steps retained (depends on discard and thin values).
-    samples - list              : actual indices of states visited along each Markov chain (return_samples=True).
-                                    used to view details of chain movement between states, largely for convergence checks.
+    Returns
+    -------
+    IntArray
+        State visit statistics as a function of chain step. Shape depends on
+        the input sampler structure and normalize parameter:
+        - If normalize=True: proportions of visits to each state
+        - If normalize=False: cumulative visit counts to each state
 
-    Attributes defined/updated:
-    state_chain - ints                   : list of states visited along markov chains
-    relative_marginal_likelihoods        : ratio of evidences/marginal Likelihods of each state
-    state_changes_perwalker - array ints : number of times the walker changed state along the markov chain
-    total_state_changes - int            : total number of state changes for all walkers
+    Notes
+    -----
+    The relative visit proportions provide estimates of the relative marginal
+    likelihoods (Bayes factors) between states in the trans-dimensional model.
+    These estimates become more accurate as the chain length increases and the
+    sampler converges.
 
+    For convergence assessment, monitor whether the visit proportions stabilize
+    across different walkers and chain segments.
+
+    Examples
+    --------
+    >>> visits = get_visits_to_states(
+    ...     transc_sampler=results,
+    ...     discard=1000,
+    ...     thin=10,
+    ...     normalize=True
+    ... )
+    >>> # visits now contains proportional visits to each state
     """
 
     samples = transc_sampler.state_chain[:, discard::thin]
@@ -61,7 +82,7 @@ def count_state_changes(
     state_chain: MultiWalkerStateChain,
     discard: int = 0,
     thin: int = 1,
-) -> np.ndarray:
+) -> IntArray:
     """
     Count the number of state changes in the state chain.
 
@@ -71,7 +92,8 @@ def count_state_changes(
     thin - int                            : thinning factor for samples (default = 1)
 
     Returns:
-    np.ndarray : array of counts of state changes for each walker
+    -------
+    IntArray : array of counts of state changes for each walker
     """
     _state_chain = state_chain[:, discard::thin]
     n_walkers = _state_chain.shape[0]
@@ -127,7 +149,7 @@ def get_acceptance_rate_between_states(
     )
 
 
-def get_autocorr_between_state_jumps(state_chain: MultiWalkerStateChain) -> float:
+def get_autocorr_between_state_jumps(state_chain: IntArray) -> float:
     """
     Calculate the autocorrelation time for between state jumps.
 
@@ -147,22 +169,47 @@ walker_average_functions = {
 
 
 def get_relative_marginal_likelihoods(
-    visits_to_states: Annotated[
-        np.ndarray[tuple[int, int], np.dtype[np.integer]], "n_walkers, n_states"
-    ],
+    visits_to_states: Annotated[IntArray, "n_walkers, n_states"],
     walker_average: str = "mean",
-) -> np.ndarray[tuple[int], np.dtype[np.floating]]:
-    """
-    Get the relative marginal likelihoods from the state chain.
+) -> FloatArray:
+    """Calculate relative marginal likelihoods from state visit counts.
 
-    This is simply the expected number of visits to each state.
+    This function estimates the relative marginal likelihoods
+    between different states based on the number of times each state was
+    visited during trans-dimensional MCMC sampling.
 
-    Parameters:
-    visits_to_states - list[float] : final count of visits of each walker to each state i.e. shape is (n_walkers, n_states)
-    walker_average - str            : type of average over walkers ('mean' or 'median', default = 'mean')
+    Parameters
+    ----------
+    visits_to_states : IntArray
+        Final visit counts for each walker to each state. Shape (n_walkers, n_states)
+        where element [i, j] is the total number of times walker i visited state j.
+    walker_average : str, optional
+        Type of average to compute across walkers. Options are:
+        - 'mean': arithmetic mean (default)
+        - 'median': median (more robust to outliers)
 
-    Returns:
-    np.ndarray : array of relative marginal likelihoods
+    Returns
+    -------
+    FloatArray
+        Relative marginal likelihoods for each state. Shape (n_states,).
+
+    Notes
+    -----
+    The relative marginal likelihood for state i is proportional to the expected
+    number of visits to that state. Under certain conditions (detailed balance,
+    proper pseudo-priors), this provides an unbiased estimator of the ratio of
+    marginal likelihoods.
+
+    For reliable estimates:
+    - Ensure sufficient sampling (many chain steps)
+    - Check convergence across different walkers
+    - Verify that all states have been adequately explored
+
+    Examples
+    --------
+    >>> # visits_to_states has shape (32, 3) for 32 walkers, 3 states
+    >>> rel_ml = get_relative_marginal_likelihoods(visits_to_states)
+    >>> print(f"Relative marginal likelihoods: {rel_ml}")
     """
     visits = walker_average_functions[walker_average](visits_to_states)
     return visits / np.sum(visits)

@@ -9,7 +9,7 @@ from functools import partial
 import numpy as np
 from tqdm import tqdm
 
-from ..utils.types import Int2DArray, StateOrderedEnsemble
+from ..utils.types import IntArray, StateOrderedEnsemble
 
 logging.basicConfig(
     level=logging.INFO,
@@ -46,7 +46,7 @@ class EnsembleResamplerChain:
             raise ValueError("n_states must be a positive integer.")
 
     @property
-    def state_chain_tot(self) -> Int2DArray:
+    def state_chain_tot(self) -> IntArray:
         """Running cumulative tally of states visited."""
 
         from ._utils import count_visits_to_states
@@ -124,22 +124,22 @@ class MultiWalkerEnsembleResamplerChain:
         return [chain.member_chain for chain in self.chains]
 
     @property
-    def state_chain(self) -> np.ndarray:
+    def state_chain(self) -> IntArray:
         """Concatenated state chain from all walkers."""
         return np.array([chain.state_chain for chain in self.chains])
 
     @property
-    def state_chain_tot(self) -> np.ndarray:
+    def state_chain_tot(self) -> IntArray:
         """Concatenated total state chain from all walkers."""
         return np.array([chain.state_chain_tot for chain in self.chains])
 
     @property
-    def n_accepted(self) -> np.ndarray:
+    def n_accepted(self) -> IntArray:
         """Number of accepted proposals for each walker."""
         return np.array([chain.n_accepted for chain in self.chains])
 
     @property
-    def n_proposed(self) -> np.ndarray:
+    def n_proposed(self) -> IntArray:
         """Number of proposals for each walker."""
         return np.array([chain.n_proposed for chain in self.chains])
 
@@ -157,35 +157,71 @@ def run_ensemble_resampler(  # Independent state Marginal Likelihoods from pre-c
     state_proposal_weights: list[list[float]] | None = None,
     progress=False,
 ) -> MultiWalkerEnsembleResamplerChain:
-    """
-    MCMC sampler over independent states using a Markov Chain.
+    """Run MCMC sampler over independent states using pre-computed ensembles.
 
-    Calculates relative evidence of each state by sampling over previously computed posterior ensembles for each state.
-    Requires only log density values for posterior and pseudo priors at the sample locations (not actual samples).
-    This routine is an alternate to run_ens_mcint(), using the same inputs of log density values of posterior samples within each state.
-    Here a single Markov chain is used.
+    This function performs trans-conceptual MCMC by resampling from pre-computed
+    posterior ensembles in each state. It calculates relative evidence of each state
+    by sampling over the ensemble members according to their posterior and pseudo-prior
+    densities.
 
-    Inputs:
-    n_walkers - int                                                       : number of random walkers used by ensemble resampler.
-    n_steps - int                                                         : number of Markov chain steps to perform
-    log_posterior_ens -  list of floats, [i,n[i]], (i=1,...,n_states)     : log-posterior of ensembles in each state, where n[i] is the number of samples in the ith state.
-    log_pseudo_prior_ens -  list of floats, [i,n[i]], (i=1,...,n_states)  : log-pseudo prior of samples in each state, where n[i] is the number of samples in the ith state.
-    seed - int                                                           : random number seed
-    parallel - bool                                                      : switch to make use of multiprocessing package to parallelize over walkers
-    n_processors - int                                                    : number of processors to distribute work across (if parallel=True, else ignored). Default = multiprocessing.cpu_count()/1 if parallel = True/False.
-    progress - bool                                                      : option to write diagnostic info to standard out
+    Parameters
+    ----------
+    n_walkers : int
+        Number of random walkers used by the ensemble resampler.
+    n_steps : int
+        Number of Markov chain steps to perform per walker.
+    n_states : int
+        Number of independent states in the problem.
+    n_dims : list of int
+        List of parameter dimensions for each state.
+    log_posterior_ens : StateOrderedEnsemble
+        Log-posterior values of ensemble members in each state.
+        Format: list of arrays, where each array contains log-posterior values
+        for the ensemble members in that state.
+    log_pseudo_prior_ens : StateOrderedEnsemble
+        Log-pseudo-prior values of ensemble members in each state.
+        Format: list of arrays, where each array contains log-pseudo-prior values
+        for the ensemble members in that state.
+    seed : int, optional
+        Random number seed for reproducible results. Default is 61254557.
+    parallel : bool, optional
+        Whether to use multiprocessing to parallelize over walkers. Default is False.
+    n_processors : int, optional
+        Number of processors to use if parallel=True. Default is 1.
+    state_proposal_weights : list of list of float, optional
+        Weights for proposing transitions between states. Should be a matrix
+        where element [i][j] is the weight for proposing state j from state i.
+        Diagonal elements are ignored. If None, uniform weights are used.
+    progress : bool, optional
+        Whether to display progress information. Default is False.
 
-    Attributes defined/updated:
-    n_states - int                                 : number of independent states (calculated from input ensembles if provided).
-    n_samples - int                                : list of number of samples in each state (calculated from input ensembles if provided).
-    state_chain_tot - n_samples*int                : array of states visited along the trans-C chain.
-    alg - string                                  : string defining the sampler method used.
+    Returns
+    -------
+    MultiWalkerEnsembleResamplerChain
+        Chain results containing state sequences, ensemble member indices,
+        and diagnostics for all walkers.
 
+    Notes
+    -----
+    This method requires pre-computed posterior ensembles and their corresponding
+    log-density values. The ensembles can be generated using `run_mcmc_per_state()`
+    and the pseudo-prior values using automatic fitting routines.
 
-    Notes:
-    The input posterior samples and log posterior values in each state can be either be calculated using utility routine 'run_mcmc_per_state', or provided by the user.
-    The input log values of pseudo prior samples in each state can be either be calculated using utility routine 'run_fitmixture', or provided by the user.
+    The algorithm works by:
+    1. Selecting ensemble members within states based on posterior weights
+    2. Proposing transitions between states based on relative evidence
+    3. Accepting/rejecting proposals using Metropolis-Hastings criterion
 
+    Examples
+    --------
+    >>> results = run_ensemble_resampler(
+    ...     n_walkers=32,
+    ...     n_steps=1000,
+    ...     n_states=3,
+    ...     n_dims=[2, 3, 1],
+    ...     log_posterior_ens=posterior_ensembles,
+    ...     log_pseudo_prior_ens=pseudo_prior_ensembles
+    ... )
     """
 
     n_samples = [len(log_post_ens) for log_post_ens in log_posterior_ens]

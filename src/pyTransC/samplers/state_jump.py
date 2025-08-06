@@ -12,7 +12,8 @@ import numpy as np
 from tqdm import tqdm
 
 from ..utils.types import (
-    Int2DArray,
+    FloatArray,
+    IntArray,
     MultiStateDensity,
     MultiWalkerModelChain,
     MultiWalkerStateChain,
@@ -32,7 +33,7 @@ logger = logging.getLogger(__name__)
 class Sample:
     """Convenience dataclass to hold a single sample from the state jump sampler."""
 
-    model: np.ndarray
+    model: FloatArray
     state: int
 
 
@@ -48,7 +49,7 @@ class StateJumpChain:
     """Dataclass to hold the results of the state jump sampler."""
 
     n_states: int  # This could be inferred from state_chain assuming every state is visited at least once.  Requiring it at initialisation makes it more robust for downstream tasks.
-    model_chain: list[np.ndarray] = field(default_factory=list, init=False)
+    model_chain: list[FloatArray] = field(default_factory=list, init=False)
     state_chain: list[int] = field(default_factory=list, init=False)
     accept_within: int = field(default=0, init=False)
     prop_within: int = field(default=0, init=False)
@@ -65,7 +66,7 @@ class StateJumpChain:
             raise ValueError("n_states must be a positive integer.")
 
     @property
-    def state_chain_tot(self) -> Int2DArray:
+    def state_chain_tot(self) -> IntArray:
         """Running cumulative tally of states visited."""
 
         from ._utils import count_visits_to_states
@@ -162,27 +163,27 @@ class MultiWalkerStateJumpChain:
         return np.array([chain.state_chain for chain in self.chains])
 
     @property
-    def state_chain_tot(self) -> np.ndarray:
+    def state_chain_tot(self) -> IntArray:
         """Concatenated total state chain from all walkers."""
         return np.array([chain.state_chain_tot for chain in self.chains])
 
     @property
-    def accept_within(self) -> np.ndarray:
+    def accept_within(self) -> IntArray:
         """Number of within-state acceptances for each state."""
         return np.array([chain.accept_within for chain in self.chains])
 
     @property
-    def prop_within(self) -> np.ndarray:
+    def prop_within(self) -> IntArray:
         """Number of within-state proposals for each walkers."""
         return np.array([chain.prop_within for chain in self.chains])
 
     @property
-    def accept_between(self) -> np.ndarray:
+    def accept_between(self) -> IntArray:
         """Number of between-state acceptances for each walkers."""
         return np.array([chain.accept_between for chain in self.chains])
 
     @property
-    def prop_between(self) -> np.ndarray:
+    def prop_between(self) -> IntArray:
         """Number of between-state proposals for each walkers."""
         return np.array([chain.prop_between for chain in self.chains])
 
@@ -192,7 +193,7 @@ def run_state_jump_sampler(  # Independent state MCMC sampler on product space w
     n_steps,
     n_states: int,
     n_dims: list[int],
-    start_positions: list[np.ndarray],
+    start_positions: list[FloatArray],
     start_states: list[int],
     log_posterior: MultiStateDensity,
     log_pseudo_prior: SampleableMultiStateDensity,
@@ -203,46 +204,88 @@ def run_state_jump_sampler(  # Independent state MCMC sampler on product space w
     n_processors=1,
     progress=False,
 ) -> MultiWalkerStateJumpChain:
-    """
-    MCMC sampler over independent states using a Metropolis-Hastings algorithm and proposal equal to the supplied pseudo-prior function.
+    """Run MCMC sampler with direct jumps between states of different states.
 
-    Calculates Markov chain across states for state jump sampler
+    This function implements trans-conceptual MCMC using a Metropolis-Hastings
+    algorithm that can propose jumps between states with different numbers of
+    parameters. Between-state moves use the pseudo-prior as the proposal, while
+    within-state moves use a user-defined proposal function.
 
-    Inputs:
-    n_walkers - int               : number of random walkers used by state jump sampler.
-    n_steps - int                 : number of steps required per walker.
-    pos - n_walkers*n_dims*float   : list of starting locations of markov chains in each state.
-    pos_state - n_walkers*int     : list of starting states of markov chains in each state.
-    log_posterior()              : user supplied function to evaluate the log-posterior density for the ith state at location x.
-                                    calling sequence log_posterior(x,i)
-    log_pseudo_prior()           : user supplied function to evaluate the log-pseudo-prior density for the ith state at location x.
-                                    calling sequence log_posterior(x,i).
-                                    NB: must be normalized over respective state spaces.
-    log_proposal()               : user supplied function to generate random deviate for ith state
-                                    calling sequence log_proposal(xc,i,*log_proposal_args), where xc is the current location of the chain (allows for relative proposals)
-                                    This is only used for within state moves, and not for between state moves for which it is effectively replaced by the pseudo-prior.
-    log_proposal_args - list     : user defined (optional) list of additional arguments passed to log_proposal. See calling sequence above.
-    prob_state - float           : probability of proposal a state change per step of Markov chain (otherwise a parameter change within current state is proposed)
-    seed - int                   : random number seed
-    parallel - bool              : switch to make use of multiprocessing package to parallelize over walkers
-    n_processors - int            : number of processors to distribute work across (if parallel=True, else ignored). Default = multiprocessing.cpu_count()/1 if parallel = True/False.
-    progress - bool              : switch to report progress to standard out.
+    Parameters
+    ----------
+    n_walkers : int
+        Number of random walkers used by the state jump sampler.
+    n_steps : int
+        Number of MCMC steps required per walker.
+    n_states : int
+        Number of independent states in the problem.
+    n_dims : list of int
+        List of parameter dimensions for each state.
+    start_positions : list of FloatArray
+        Starting parameter positions for each walker. Each array should contain
+        the initial parameter values for the corresponding starting state.
+    start_states : list of int
+        Starting state indices for each walker.
+    log_posterior : MultiStateDensity
+        Function to evaluate the log-posterior density at location x in state i.
+        Must have signature log_posterior(x, state) -> float.
+    log_pseudo_prior : SampleableMultiStateDensity
+        Object with methods:
+        - __call__(x, state) -> float: evaluate log pseudo-prior at x for state
+        - draw_deviate(state) -> FloatArray: sample from pseudo-prior for state
+        Note: Must be normalized over respective state spaces.
+    log_proposal : ProposableMultiStateDensity
+        Object with methods:
+        - propose(x_current, state) -> FloatArray: propose new x in state
+        - __call__(x, state) -> float: log proposal probability (for MH ratio)
+    prob_state : float, optional
+        Probability of proposing a state change per MCMC step. Otherwise,
+        a parameter change within the current state is proposed. Default is 0.1.
+    seed : int, optional
+        Random number seed for reproducible results. Default is 61254557.
+    parallel : bool, optional
+        Whether to use multiprocessing to parallelize over walkers. Default is False.
+    n_processors : int, optional
+        Number of processors to use if parallel=True. Default is 1.
+    progress : bool, optional
+        Whether to display progress information. Default is False.
 
-    Attributes defined/updated:
-    nsamples - int                                : list of number of samples in each state (calculated from input ensembles if provided).
-    n_walkers - int                                : number of random walkers used by state jump sampler.
-    state_chain - n_walkers*n_steps*int             : list of states visited along the trans-C chain.
-    state_chain_tot - n_walkers*n_steps*int         : array of cumulative number of visits to each state along the chains.
-    model_chain - floats                          : list of trans-C sample along chain.
-    alg - string                                  : string defining the sampler method used.
+    Returns
+    -------
+    MultiWalkerStateJumpChain
+        Chain results containing state sequences, model parameters, proposal
+        acceptance rates, and diagnostics for all walkers.
 
-    Notes:
-    A simple Metropolis-Hastings MCMC algorithm is used and applied to the product space formulation. Here moves between states are assumed to only perturb the state variable, k-> k'.
-    This means that one only needs to generate a new model in state k' from the pseudo-prior of k'. The M-H condition then only involves the current model in state k and the new model in state k',
-    with the acceptance criterion then equal to the ratio of the posteriors multiplied by the ratio of the normalized pseudo-priors.
-    For within state moves the algorithm becomes normal M-H using a user supplied proposal function to generate new deviates within state k. The user can define this as relative to current model,
-    or according to a prescribed PDF within the respective state, e.g. the pseudo-prior again. An independent user supplied proposal function is provided for flexibility.
+    Notes
+    -----
+    The algorithm uses a Metropolis-Hastings sampler with two types of moves:
 
+    1. **Between-state moves** (probability `prob_state`):
+       - Propose a new state uniformly at random
+       - Generate new parameters from the pseudo-prior of the proposed state
+       - Accept/reject based on posterior and pseudo-prior ratios
+
+    2. **Within-state moves** (probability `1 - prob_state`):
+       - Use the user-defined proposal function to generate new parameters
+       - Accept/reject using standard Metropolis-Hastings criterion
+
+    The pseudo-prior must be normalized for the between-state acceptance
+    criterion to satisfy detailed balance.
+
+    Examples
+    --------
+    >>> results = run_state_jump_sampler(
+    ...     n_walkers=32,
+    ...     n_steps=1000,
+    ...     n_states=3,
+    ...     n_dims=[2, 3, 1],
+    ...     start_positions=[[0.5, 0.5], [1.0, 0.0, -1.0], [2.0]],
+    ...     start_states=[0, 1, 2],
+    ...     log_posterior=my_log_posterior,
+    ...     log_pseudo_prior=my_log_pseudo_prior,
+    ...     log_proposal=my_log_proposal,
+    ...     prob_state=0.2
+    ... )
     """
 
     logger.info("Running state-jump trans-C sampler")
@@ -286,7 +329,7 @@ def _run_state_jump_sampler_parallel(
     n_walkers: int,
     n_steps: int,
     n_states: int,
-    start_positions: list[np.ndarray],
+    start_positions: list[FloatArray],
     start_states: list[int],
     log_posterior: MultiStateDensity,
     log_pseudo_prior: SampleableMultiStateDensity,
@@ -339,7 +382,7 @@ def _run_state_jump_sampler_serial(
     n_walkers: int,
     n_steps: int,
     n_states: int,
-    start_positions: list[np.ndarray],
+    start_positions: list[FloatArray],
     start_states: list[int],
     log_posterior: MultiStateDensity,
     log_pseudo_prior: SampleableMultiStateDensity,
@@ -372,7 +415,7 @@ def _run_state_jump_sampler_serial(
 def _mcmc_walker(
     n_states: int,
     initial_state: int,
-    initial_model: np.ndarray,
+    initial_model: FloatArray,
     log_posterior: MultiStateDensity,
     log_pseudo_prior: SampleableMultiStateDensity,
     log_proposal: ProposableMultiStateDensity,

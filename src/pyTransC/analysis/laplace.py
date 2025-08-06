@@ -5,7 +5,7 @@ import numpy as np
 from scipy.optimize import minimize
 
 from ..utils.exceptions import InputError
-from ..utils.types import MultiStateDensity
+from ..utils.types import FloatArray, MultiStateDensity
 
 
 def run_laplace_evidence_approximation(
@@ -115,9 +115,9 @@ def run_laplace_evidence_approximation(
 
 def _from_ensemble(
     n_dims: list[int],
-    ensemble_per_state: list[np.ndarray],
-    log_posterior_ens: list[np.ndarray],
-) -> tuple[list[np.ndarray], list[np.ndarray], list[float], list[float]]:
+    ensemble_per_state: list[FloatArray],
+    log_posterior_ens: list[FloatArray],
+) -> tuple[list[FloatArray], list[FloatArray], list[float], list[float]]:
     """Calculate Laplace approximation from ensemble of models and log-posterior values."""
     # we fit a mean and covariance to ensembles in each state
     hessians = []
@@ -151,7 +151,7 @@ def _from_log_posterior(
     n_states: int,
     n_dims: list[int],
     log_posterior: MultiStateDensity,
-    map_models: list[np.ndarray],
+    map_models: list[FloatArray],
     optimize: bool = False,
 ):
     """Calculate Laplace approximation from log-posterior function."""
