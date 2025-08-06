@@ -111,6 +111,14 @@ class MultiWalkerEnsembleResamplerChain:
         return 0
 
     @property
+    def n_steps(self) -> int:
+        """Total number of steps across all walkers."""
+        if self.chains:
+            # assuming all chains have the same number of steps
+            return self.chains[0].n_steps
+        return 0
+
+    @property
     def member_chain(self) -> list[list[int]]:
         """Concatenated member index chain from all walkers."""
         return [chain.member_chain for chain in self.chains]
