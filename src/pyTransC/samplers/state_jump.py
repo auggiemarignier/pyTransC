@@ -342,42 +342,10 @@ def _run_state_jump_sampler_parallel(
 
     THIS HAS NOT BEEN TESTED!
     """
-    if n_walkers == 1:
-        warnings.warn(
-            " Parallel mode used but only a single walker specified. Nothing to parallelize over?"
-        )
-    if n_processors == 1:
-        n_processors = multiprocessing.cpu_count()
-    chunksize = int(np.ceil(n_walkers / n_processors))  # set work per processor
-    jobs = [
-        (start_positions[i], start_states[i]) for i in range(n_walkers)
-    ]  # input data for parallel jobs
-    func = partial(
-        _mcmc_walker,
-        n_states=n_states,
-        log_posterior=log_posterior,
-        log_pseudo_prior=log_pseudo_prior,
-        log_proposal=log_proposal,
-        n_steps=n_steps,
-        prob_state=prob_state,
+    raise NotImplementedError(
+        "The parallel implementation of the state jump sampler is untested and has been disabled. "
+        "Please implement tests and validate this function before enabling parallel execution."
     )
-    if progress:
-        with multiprocessing.Pool(processes=n_processors) as pool:
-            chains: list[StateJumpChain] = list(
-                tqdm(
-                    pool.imap_unordered(func, jobs, chunksize=chunksize),
-                    total=len(jobs),
-                )
-            )
-    else:
-        pool = multiprocessing.Pool(processes=n_processors)
-        chains: list[StateJumpChain] = pool.map(func, jobs, chunksize=chunksize)
-        pool.close()
-        pool.join()
-
-    return chains
-
-
 def _run_state_jump_sampler_serial(
     n_walkers: int,
     n_steps: int,
