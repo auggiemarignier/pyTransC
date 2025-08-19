@@ -1,12 +1,9 @@
 """State-Jump Sampling for TransC."""
 
 import logging
-import multiprocessing
 import random
-import warnings
 from dataclasses import dataclass, field
 from enum import StrEnum, auto
-from functools import partial
 
 import numpy as np
 from tqdm import tqdm

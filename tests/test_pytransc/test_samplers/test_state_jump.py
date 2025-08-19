@@ -81,7 +81,7 @@ def test_chain_state_chain_tot(chain: StateJumpChain) -> None:
         [2, 2, 1, 0, 1],
     ]
 
-    assert chain.state_chain_tot == expected_totals
+    assert np.array_equal(chain.state_chain_tot, expected_totals)
 
 
 def test_update_chain_accept_within(chain: StateJumpChain) -> None:
