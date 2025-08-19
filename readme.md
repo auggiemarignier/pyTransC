@@ -7,7 +7,7 @@ _Python library for implementing TransC MCMC sampling_
 
 
 This repository contains source code to implement three Trans-Conceptual MCMC sampling algorithms as described in the article 
-[Sambridge, Valentine and Hauser (2025)](https://essopenarchive.org/users/841079/articles/1231492-trans-conceptual-sampling-bayesian-inference-with-competing-assumptions).
+[Sambridge, Valentine and Hauser (2025)](https://agupubs.onlinelibrary.wiley.com/doi/10.1029/2024JB030470).
 
 
 ## Installation
@@ -33,44 +33,84 @@ Other utility functions include:
 
 `get_transc_samples()` - creates posterior TransC/TransD ensemble from results of any sample.
 
-Here is the docstring of the function `run_ensemble_resampler()`:
+Here is the docstring of the function `run_state_jump_sampler()`:
 
        """
-        MCMC sampler over independent states using a Markov Chain.
+       Run MCMC sampler with direct jumps between states of different states.
 
-        Calculates relative evdience of each state by sampling over previously computed posterior ensembles for each state.
-        Requires only log density values for posterior and pseudo priors at the sampe locations (not actual samples).
-        This routine is an alternate to run_ens_mcint(), using the same inputs of log density values of posterior samples within each state.
-        Here a single Markov chain is used.
+           This function implements trans-conceptual MCMC using a Metropolis-Hastings
+           algorithm that can propose jumps between states with different numbers of
+           parameters. Between-state moves use the pseudo-prior as the proposal, while
+           within-state moves use a user-defined proposal function.
 
-        Inputs:
-        nwalkers - int                                                       : number of random walkers used by ensemble resampler.
-        nsteps - int                                                         : number of Markov chain steps to perform
-        log_posterior_ens -  list of floats, [i,n[i]], (i=1,...,nstates)     : log-posterior of ensembles in each state, where n[i] is the number of samples in the ith state.
-        log_pseudo_prior_ens -  list of floats, [i,n[i]], (i=1,...,nstates)  : log-pseudo prior of samples in each state, where n[i] is the number of samples in the ith state.
-        seed - int                                                           : random number seed
-        parallel - bool                                                      : switch to make use of multiprocessing package to parallelize over walkers
-        nprocessors - int                                                    : number of processors to distribute work across (if parallel=True, else ignored). Default = multiprocessing.cpu_count()/1 if parallel = True/False.
-        progress - bool                                                      : option to write diagnostic info to standard out
+           Parameters
+           ----------
+           n_walkers : int
+               Number of random walkers used by the state jump sampler.
+           n_steps : int
+               Number of MCMC steps required per walker.
+           n_states : int
+               Number of independent states in the problem.
+           n_dims : list of int
+               List of parameter dimensions for each state.
+           start_positions : list of FloatArray
+               Starting parameter positions for each walker. Each array should contain
+               the initial parameter values for the corresponding starting state.
+           start_states : list of int
+               Starting state indices for each walker.
+           log_posterior : MultiStateDensity
+               Function to evaluate the log-posterior density at location x in state i.
+               Must have signature log_posterior(x, state) -> float.
+           log_pseudo_prior : SampleableMultiStateDensity
+               Object with methods:
+               - __call__(x, state) -> float: evaluate log pseudo-prior at x for state
+               - draw_deviate(state) -> FloatArray: sample from pseudo-prior for state
+               Note: Must be normalized over respective state spaces.
+           log_proposal : ProposableMultiStateDensity
+               Object with methods:
+               - propose(x_current, state) -> FloatArray: propose new x in state
+               - __call__(x, state) -> float: log proposal probability (for MH ratio)
+           prob_state : float, optional
+               Probability of proposing a state change per MCMC step. Otherwise,
+               a parameter change within the current state is proposed. Default is 0.1.
+           seed : int, optional
+               Random number seed for reproducible results. Default is 61254557.
+           parallel : bool, optional
+               Whether to use multiprocessing to parallelize over walkers. Default is False.
+           n_processors : int, optional
+               Number of processors to use if parallel=True. Default is 1.
+           progress : bool, optional
+        
+        
+    Returns
+    -------
+    MultiWalkerStateJumpChain
+        Chain results containing state sequences, model parameters, proposal
+        acceptance rates, and diagnostics for all walkers.
 
-        Attributes defined/updated:
-        nstates - int                                 : number of independent states (calculated from input ensembles if provided).
-        nsamples - int                                : list of number of samples in each state (calculated from input ensembles if provided).
-        state_chain_tot - nsamples*int                : array of states visited along the trans-D chain.
-        alg - string                                  : string defining the sampler method used.
+    Notes
+    -----
+    The algorithm uses a Metropolis-Hastings sampler with two types of moves:
 
+    1. **Between-state moves** (probability `prob_state`):
+       - Propose a new state uniformly at random
+       - Generate new parameters from the pseudo-prior of the proposed state
+       - Accept/reject based on posterior and pseudo-prior ratios
 
-        Notes:
-        The input posterior samples and log posterior values in each state can be either be calcuated using utility routine 'run_mcmc_per_state', or provided by the user.
-        The input log values of pseudo prior samples in each state can be either be calcuated using utility routine 'run_fitmixture', or provided by the user.
+    2. **Within-state moves** (probability `1 - prob_state`):
+       - Use the user-defined proposal function to generate new parameters
+       - Accept/reject using standard Metropolis-Hastings criterion
 
-        """
+    The pseudo-prior must be normalized for the between-state acceptance
+    criterion to satisfy detailed balance.
+    
+    """
 
 ## Example
 
 ```python
 import numpy as np
-from pytransc import TransC_Sampler         # TransC library class
+from pytransc.samplers import run_state_jump_sampler
 ```
 Detailed examples of showing implementation of all three samplers can be found in
 
@@ -83,4 +123,10 @@ Detailed examples of showing implementation of all three samplers can be found i
 
 ## Citations and Acknowledgments
 
-> *Sambridge, M., Valentine, A. & Hauser, J., 2025. Trans-Conceptual Sampling: Bayesian Inference With Competing Assumptions, JGR Solid Earth, submitted.*
+> *Sambridge, M., Valentine, A. & Hauser, J., 2025. Trans-Conceptual Sampling: Bayesian Inference With Competing Assumptions, JGR Solid Earth, Volume 130, Issue 8, 17 August 2025, e2024JB030470.*
+
+
+
+
+
+
