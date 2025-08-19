@@ -38,48 +38,48 @@ Here is the docstring of the function `run_ensemble_resampler()`:
        """
        Run MCMC sampler with direct jumps between states of different states.
 
-    This function implements trans-conceptual MCMC using a Metropolis-Hastings
-    algorithm that can propose jumps between states with different numbers of
-    parameters. Between-state moves use the pseudo-prior as the proposal, while
-    within-state moves use a user-defined proposal function.
+           This function implements trans-conceptual MCMC using a Metropolis-Hastings
+           algorithm that can propose jumps between states with different numbers of
+           parameters. Between-state moves use the pseudo-prior as the proposal, while
+           within-state moves use a user-defined proposal function.
 
-    Parameters
-    ----------
-    n_walkers : int
-        Number of random walkers used by the state jump sampler.
-    n_steps : int
-        Number of MCMC steps required per walker.
-    n_states : int
-        Number of independent states in the problem.
-    n_dims : list of int
-        List of parameter dimensions for each state.
-    start_positions : list of FloatArray
-        Starting parameter positions for each walker. Each array should contain
-        the initial parameter values for the corresponding starting state.
-    start_states : list of int
-        Starting state indices for each walker.
-    log_posterior : MultiStateDensity
-        Function to evaluate the log-posterior density at location x in state i.
-        Must have signature log_posterior(x, state) -> float.
-    log_pseudo_prior : SampleableMultiStateDensity
-        Object with methods:
-        - __call__(x, state) -> float: evaluate log pseudo-prior at x for state
-        - draw_deviate(state) -> FloatArray: sample from pseudo-prior for state
-        Note: Must be normalized over respective state spaces.
-    log_proposal : ProposableMultiStateDensity
-        Object with methods:
-        - propose(x_current, state) -> FloatArray: propose new x in state
-        - __call__(x, state) -> float: log proposal probability (for MH ratio)
-    prob_state : float, optional
-        Probability of proposing a state change per MCMC step. Otherwise,
-        a parameter change within the current state is proposed. Default is 0.1.
-    seed : int, optional
-        Random number seed for reproducible results. Default is 61254557.
-    parallel : bool, optional
-        Whether to use multiprocessing to parallelize over walkers. Default is False.
-    n_processors : int, optional
-        Number of processors to use if parallel=True. Default is 1.
-    progress : bool, optional
+           Parameters
+           ----------
+           n_walkers : int
+               Number of random walkers used by the state jump sampler.
+           n_steps : int
+               Number of MCMC steps required per walker.
+           n_states : int
+               Number of independent states in the problem.
+           n_dims : list of int
+               List of parameter dimensions for each state.
+           start_positions : list of FloatArray
+               Starting parameter positions for each walker. Each array should contain
+               the initial parameter values for the corresponding starting state.
+           start_states : list of int
+               Starting state indices for each walker.
+           log_posterior : MultiStateDensity
+               Function to evaluate the log-posterior density at location x in state i.
+               Must have signature log_posterior(x, state) -> float.
+           log_pseudo_prior : SampleableMultiStateDensity
+               Object with methods:
+               - __call__(x, state) -> float: evaluate log pseudo-prior at x for state
+               - draw_deviate(state) -> FloatArray: sample from pseudo-prior for state
+               Note: Must be normalized over respective state spaces.
+           log_proposal : ProposableMultiStateDensity
+               Object with methods:
+               - propose(x_current, state) -> FloatArray: propose new x in state
+               - __call__(x, state) -> float: log proposal probability (for MH ratio)
+           prob_state : float, optional
+               Probability of proposing a state change per MCMC step. Otherwise,
+               a parameter change within the current state is proposed. Default is 0.1.
+           seed : int, optional
+               Random number seed for reproducible results. Default is 61254557.
+           parallel : bool, optional
+               Whether to use multiprocessing to parallelize over walkers. Default is False.
+           n_processors : int, optional
+               Number of processors to use if parallel=True. Default is 1.
+           progress : bool, optional
         
         
     Returns
@@ -124,6 +124,7 @@ Detailed examples of showing implementation of all three samplers can be found i
 ## Citations and Acknowledgments
 
 > *Sambridge, M., Valentine, A. & Hauser, J., 2025. Trans-Conceptual Sampling: Bayesian Inference With Competing Assumptions, JGR Solid Earth, Volume 130, Issue 8, 17 August 2025, e2024JB030470.*
+
 
 
 
