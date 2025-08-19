@@ -1,0 +1,32 @@
+{
+    "python.defaultInterpreterPath": ".venv/bin/python",
+    "python.terminal.activateEnvInCurrentTerminal": true,
+
+    "[python]": {
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "editor.formatOnSave": true
+    },
+
+    "python.testing.pytestArgs": [
+        "tests"
+    ],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true,
+    "python.analysis.typeCheckingMode": "basic",
+    "ruff.organizeImports": true,
+    "cSpell.words": [
+        "autocorr",
+        "burnin",
+        "fardal",
+        "Juerg",
+        "mcint",
+        "ndarray",
+        "prob",
+        "Proposable",
+        "pytransc",
+        "resampler",
+        "Sambridge",
+        "Sampleable",
+        "transc"
+    ]
+}
