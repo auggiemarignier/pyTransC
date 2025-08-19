@@ -83,10 +83,7 @@ Detailed examples of showing implementation of all three samplers can be found i
 
 ## Citations and Acknowledgments
 
-> *Sambridge, M., Valentine, A. & Hauser, J., 2025. Trans-Conceptual Sampling: Bayesian Inference With Competing Assumptions, JGR Solid Earth, Volume 130, Issue 8
+> *Sambridge, M., Valentine, A. & Hauser, J., 2025. Trans-Conceptual Sampling: Bayesian Inference With Competing Assumptions, JGR Solid Earth, Volume 130, Issue 8, 17 August 2025, e2024JB030470.*
 
-17 August 2025
-
-e2024JB030470.*
 
 
