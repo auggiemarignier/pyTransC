@@ -33,7 +33,7 @@ Other utility functions include:
 
 `get_transc_samples()` - creates posterior TransC/TransD ensemble from results of any sample.
 
-Here is the docstring of the function `run_ensemble_resampler()`:
+Here is the docstring of the function `run_state_jump_sampler()`:
 
        """
        Run MCMC sampler with direct jumps between states of different states.
@@ -124,6 +124,7 @@ Detailed examples of showing implementation of all three samplers can be found i
 ## Citations and Acknowledgments
 
 > *Sambridge, M., Valentine, A. & Hauser, J., 2025. Trans-Conceptual Sampling: Bayesian Inference With Competing Assumptions, JGR Solid Earth, Volume 130, Issue 8, 17 August 2025, e2024JB030470.*
+
 
 
 
