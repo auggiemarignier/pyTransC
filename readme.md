@@ -7,7 +7,7 @@ _Python library for implementing TransC MCMC sampling_
 
 
 This repository contains source code to implement three Trans-Conceptual MCMC sampling algorithms as described in the article 
-[Sambridge, Valentine and Hauser (2025)](https://essopenarchive.org/users/841079/articles/1231492-trans-conceptual-sampling-bayesian-inference-with-competing-assumptions).
+[Sambridge, Valentine and Hauser (2025)](https://agupubs.onlinelibrary.wiley.com/doi/10.1029/2024JB030470).
 
 
 ## Installation
@@ -84,3 +84,4 @@ Detailed examples of showing implementation of all three samplers can be found i
 ## Citations and Acknowledgments
 
 > *Sambridge, M., Valentine, A. & Hauser, J., 2025. Trans-Conceptual Sampling: Bayesian Inference With Competing Assumptions, JGR Solid Earth, submitted.*
+
