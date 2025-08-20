@@ -3,6 +3,7 @@
 import random
 from dataclasses import dataclass
 from functools import partial
+from typing import Any
 
 import numpy as np
 from emcee import EnsembleSampler
@@ -222,6 +223,7 @@ def run_product_space_sampler(
     parallel: bool = False,
     n_processors: int = 1,
     progress: bool = False,
+    pool: Any | None = None,
     **kwargs,
 ) -> MultiWalkerProductSpaceChain:
     """Run MCMC sampler over independent states using emcee in trans-C product space.
@@ -258,6 +260,11 @@ def run_product_space_sampler(
         Number of processors to use if parallel=True. Default is 1.
     progress : bool, optional
         Whether to display progress information. Default is False.
+    pool : Any | None, optional
+        User-provided pool for parallel processing. If provided, this takes
+        precedence over the parallel and n_processors parameters. The pool
+        must implement a map() method compatible with the standard library's
+        map() function. Default is None.
     **kwargs
         Additional keyword arguments passed to the emcee sampler.
 
@@ -275,6 +282,8 @@ def run_product_space_sampler(
 
     Examples
     --------
+    Basic usage:
+
     >>> ps = ProductSpace(n_dims=[2, 3, 1])
     >>> results = run_product_space_sampler(
     ...     product_space=ps,
@@ -285,6 +294,21 @@ def run_product_space_sampler(
     ...     log_posterior=my_log_posterior,
     ...     log_pseudo_prior=my_log_pseudo_prior
     ... )
+
+    Using with schwimmbad pools:
+
+    >>> from schwimmbad import MPIPool
+    >>> with MPIPool() as pool:
+    ...     results = run_product_space_sampler(
+    ...         product_space=ps,
+    ...         n_walkers=32,
+    ...         n_steps=1000,
+    ...         start_positions=start_pos,
+    ...         start_states=start_states,
+    ...         log_posterior=my_log_posterior,
+    ...         log_pseudo_prior=my_log_pseudo_prior,
+    ...         pool=pool
+    ...     )
     """
 
     random.seed(seed)
@@ -311,6 +335,7 @@ def run_product_space_sampler(
         n_walkers=n_walkers,
         n_steps=n_steps,
         initial_state=pos_ps,
+        pool=pool,
         parallel=parallel,
         n_processors=n_processors,
         progress=progress,

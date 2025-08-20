@@ -26,6 +26,7 @@ def run_mcmc_per_state(
     n_processors: int = 1,
     skip_initial_state_check: bool = False,
     verbose: bool = True,
+    pool: Any | None = None,
     **kwargs,
 ) -> tuple[list[FloatArray], list[FloatArray]]:
     """Run independent MCMC sampling within each state.
@@ -72,6 +73,11 @@ def run_mcmc_per_state(
         Whether to skip emcee's initial state check. Default is False.
     verbose : bool, optional
         Whether to print progress information. Default is True.
+    pool : Any | None, optional
+        User-provided pool for parallel processing. If provided, this takes
+        precedence over the parallel and n_processors parameters. The pool
+        must implement a map() method compatible with the standard library's
+        map() function. Default is None.
     **kwargs
         Additional keyword arguments passed to emcee.EnsembleSampler.
 
@@ -100,6 +106,8 @@ def run_mcmc_per_state(
 
     Examples
     --------
+    Basic usage:
+
     >>> ensembles, log_probs = run_mcmc_per_state(
     ...     n_states=2,
     ...     n_dims=[3, 2],
@@ -109,6 +117,20 @@ def run_mcmc_per_state(
     ...     log_posterior=my_log_posterior,
     ...     auto_thin=True
     ... )
+
+    Using with schwimmbad pools:
+
+    >>> from schwimmbad import MPIPool
+    >>> with MPIPool() as pool:
+    ...     ensembles, log_probs = run_mcmc_per_state(
+    ...         n_states=2,
+    ...         n_dims=[3, 2],
+    ...         n_walkers=32,
+    ...         n_steps=1000,
+    ...         pos=initial_positions,
+    ...         log_posterior=my_log_posterior,
+    ...         pool=pool
+    ...     )
     """
 
     random.seed(seed)
@@ -151,6 +173,7 @@ def run_mcmc_per_state(
             n_processors=n_processors,
             skip_initial_state_check=skip_initial_state_check,
             verbose=verbose,
+            pool=pool,
             **kwargs,
         )
         samples.append(_samples)
@@ -175,6 +198,7 @@ def process_state(
     parallel: bool = False,
     n_processors: int = 1,
     verbose: bool = True,
+    pool: Any | None = None,
     **kwargs: Any,
 ) -> tuple[FloatArray, FloatArray, FloatArray]:
     """Get the posterior samples, log probabilities, and autocorrelation times for a single state."""
@@ -183,6 +207,7 @@ def process_state(
         n_walkers=n_walkers,
         n_steps=n_steps,
         initial_state=pos,
+        pool=pool,
         parallel=parallel,
         n_processors=n_processors,
         progress=verbose,
