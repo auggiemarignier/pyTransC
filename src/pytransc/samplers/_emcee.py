@@ -1,10 +1,18 @@
 """A helper module for the emcee sampler."""
 
 import inspect
+import multiprocessing
 from collections.abc import Callable
+from concurrent.futures import ProcessPoolExecutor
 from multiprocessing import cpu_count
-from multiprocessing.pool import Pool
 from typing import Any
+
+# Set multiprocessing start method to fork to avoid pickling issues
+try:
+    multiprocessing.set_start_method('fork', force=True)
+except RuntimeError:
+    # Already set, ignore
+    pass
 
 from emcee import EnsembleSampler
 
@@ -60,7 +68,7 @@ def perform_sampling_with_emcee(
     ...         pool=pool
     ...     )
 
-    Using with multiprocessing (existing behavior):
+    Using with automatic ProcessPoolExecutor:
 
     >>> sampler = perform_sampling_with_emcee(
     ...     log_prob_func=my_log_prob,
@@ -70,6 +78,18 @@ def perform_sampling_with_emcee(
     ...     parallel=True,
     ...     n_processors=4
     ... )
+    
+    Using with custom ProcessPoolExecutor:
+    
+    >>> from concurrent.futures import ProcessPoolExecutor
+    >>> with ProcessPoolExecutor(max_workers=4) as pool:
+    ...     sampler = perform_sampling_with_emcee(
+    ...         log_prob_func=my_log_prob,
+    ...         n_walkers=32,
+    ...         n_steps=1000,
+    ...         initial_state=start_pos,
+    ...         pool=pool
+    ...     )
     """
 
     run_kwargs, initialisation_kwargs, remaining_kwargs = _extract_run_kwargs(kwargs)
@@ -77,13 +97,16 @@ def perform_sampling_with_emcee(
     # User-provided pool takes precedence
     if pool is not None:
         initialisation_kwargs["pool"] = pool
+        created_pool = None
     elif remaining_kwargs.get("parallel", False):
         n_processors = remaining_kwargs.get("n_processors", 1)
         if n_processors == 1:
             n_processors = cpu_count()
-        # Create pool and ensure it gets cleaned up
-        created_pool = Pool(processes=n_processors)
+        # Create ProcessPoolExecutor for non-daemon processes
+        created_pool = ProcessPoolExecutor(max_workers=n_processors)
         initialisation_kwargs["pool"] = created_pool
+    else:
+        created_pool = None
 
     sampler = EnsembleSampler(
         nwalkers=n_walkers,
@@ -94,9 +117,8 @@ def perform_sampling_with_emcee(
     sampler.run_mcmc(initial_state, n_steps, **run_kwargs)
 
     # Clean up internally created pool
-    if pool is None and remaining_kwargs.get("parallel", False):
-        created_pool.close()
-        created_pool.join()
+    if created_pool is not None:
+        created_pool.shutdown(wait=True)
 
     return sampler
 

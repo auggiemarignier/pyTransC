@@ -3,8 +3,16 @@
 import logging
 import multiprocessing
 import random
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from functools import partial
+
+# Set multiprocessing start method to fork to avoid pickling issues
+try:
+    multiprocessing.set_start_method('fork', force=True)
+except RuntimeError:
+    # Already set, ignore
+    pass
 
 import numpy as np
 from tqdm import tqdm
@@ -156,6 +164,8 @@ def run_ensemble_resampler(  # Independent state Marginal Likelihoods from pre-c
     n_processors=1,
     state_proposal_weights: list[list[float]] | None = None,
     progress=False,
+    walker_pool=None,
+    state_pool=None,
 ) -> MultiWalkerEnsembleResamplerChain:
     """Run MCMC sampler over independent states using pre-computed ensembles.
 
@@ -194,6 +204,15 @@ def run_ensemble_resampler(  # Independent state Marginal Likelihoods from pre-c
         Diagonal elements are ignored. If None, uniform weights are used.
     progress : bool, optional
         Whether to display progress information. Default is False.
+    walker_pool : Any | None, optional
+        User-provided pool for parallelizing walker execution. If provided, this takes
+        precedence over the parallel and n_processors parameters for walker-level
+        parallelism. The pool must implement a map() method compatible with the
+        standard library's map() function. Default is None.
+    state_pool : Any | None, optional
+        User-provided pool for parallelizing state-level operations such as
+        pseudo-prior evaluation across states. Currently reserved for future
+        enhancements. Default is None.
 
     Returns
     -------
@@ -243,7 +262,7 @@ def run_ensemble_resampler(  # Independent state Marginal Likelihoods from pre-c
     logger.info("Dimensions of each state        : %s", n_dims)
 
     random.seed(seed)
-    if parallel:
+    if walker_pool is not None or parallel:
         chains = _run_mcmc_walker_parallel(
             n_walkers,
             n_states,
@@ -254,6 +273,7 @@ def run_ensemble_resampler(  # Independent state Marginal Likelihoods from pre-c
             state_proposal_weights=_state_proposal_weights,
             n_processors=n_processors,
             progress=progress,
+            walker_pool=walker_pool,
         )
 
     else:
@@ -281,22 +301,20 @@ def _run_mcmc_walker_parallel(
     state_proposal_weights: list[list[float]],
     n_processors: int = 1,
     progress: bool = False,
+    walker_pool=None,
 ) -> list[EnsembleResamplerChain]:
-    """Run the ensemble resampler in parallel using multiprocessing.
+    """Run the ensemble resampler in parallel using ProcessPoolExecutor.
 
-    THIS HAS NOT BEEN TESTED YET.
+    Uses non-daemon processes to enable nested parallelism compatibility.
     """
     if n_processors == 1:
         # set number of processors equal to those available
         n_processors = multiprocessing.cpu_count()
 
-    # set work per processor
-    chunk_size = int(np.ceil(n_walkers / n_processors))
-
     # input data for parallel jobs
     jobs = random.choices(range(n_states), k=n_walkers)
 
-    # create reduced one argument function for passing to pool.map())
+    # create reduced one argument function for passing to pool.map()
     func = partial(
         _mcmc_walker,
         n_states=n_states,
@@ -307,19 +325,28 @@ def _run_mcmc_walker_parallel(
         state_proposal_weights=state_proposal_weights,
     )
 
-    # run the parallel jobs
-    if progress:
-        with multiprocessing.Pool(processes=n_processors) as pool:
+    # run the parallel jobs using provided pool or ProcessPoolExecutor
+    if walker_pool is not None:
+        # Use the provided external pool
+        if progress:
             chains: list[EnsembleResamplerChain] = list(
-                tqdm(pool.imap(func, jobs, chunksize=chunk_size), total=len(jobs))
+                tqdm(walker_pool.map(func, jobs), total=len(jobs))
+            )
+        else:
+            chains: list[EnsembleResamplerChain] = list(
+                walker_pool.map(func, jobs)
             )
     else:
-        pool = multiprocessing.Pool(processes=n_processors)
-        chains: list[EnsembleResamplerChain] = pool.map(
-            func, jobs, chunksize=chunk_size
-        )
-        pool.close()
-        pool.join()
+        # Use ProcessPoolExecutor (non-daemon processes)
+        with ProcessPoolExecutor(max_workers=n_processors) as executor:
+            if progress:
+                chains: list[EnsembleResamplerChain] = list(
+                    tqdm(executor.map(func, jobs), total=len(jobs))
+                )
+            else:
+                chains: list[EnsembleResamplerChain] = list(
+                    executor.map(func, jobs)
+                )
 
     return chains
 
@@ -342,13 +369,13 @@ def _run_mcmc_walker_serial(
         # carry out an mcmc walk between ensembles
         chains.append(
             _mcmc_walker(
+                current_state,
                 n_states,
                 n_samples,
-                current_state,
                 n_steps,
                 log_posterior_ens,
                 log_pseudo_prior_ens,
-                state_proposal_weights=state_proposal_weights,
+                state_proposal_weights,
             )
         )
 
@@ -356,9 +383,9 @@ def _run_mcmc_walker_serial(
 
 
 def _mcmc_walker(
+    current_state,
     n_states: int,
     n_samples: list[int],
-    current_state,
     n_steps,
     log_posterior_ens: StateOrderedEnsemble,
     log_pseudo_prior_ens: StateOrderedEnsemble,

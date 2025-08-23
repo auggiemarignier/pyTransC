@@ -1,11 +1,20 @@
 """Per-State MCMC Sampling."""
 
+import multiprocessing
 import random
 from collections.abc import Callable
+from concurrent.futures import ProcessPoolExecutor
 from functools import partial
 from typing import Any
 
 import numpy as np
+
+# Set multiprocessing start method to fork to avoid pickling issues
+try:
+    multiprocessing.set_start_method('fork', force=True)
+except RuntimeError:
+    # Already set, ignore
+    pass
 
 from ..utils.types import FloatArray, MultiStateDensity
 from ._emcee import perform_sampling_with_emcee
@@ -22,11 +31,13 @@ def run_mcmc_per_state(
     thin: int | list[int] = 1,
     auto_thin: bool = False,
     seed: int = 61254557,
+    state_pool: Any | None = None,
+    emcee_pool: Any | None = None,
     parallel: bool | list[bool] = False,
     n_processors: int = 1,
+    n_state_processors: int | None = None,
     skip_initial_state_check: bool = False,
     verbose: bool = True,
-    pool: Any | None = None,
     **kwargs,
 ) -> tuple[list[FloatArray], list[FloatArray]]:
     """Run independent MCMC sampling within each state.
@@ -118,10 +129,24 @@ def run_mcmc_per_state(
     ...     auto_thin=True
     ... )
 
-    Using with schwimmbad pools:
+    Using with state-level parallelism:
 
+    >>> from concurrent.futures import ProcessPoolExecutor
+    >>> with ProcessPoolExecutor(max_workers=4) as state_pool:
+    ...     ensembles, log_probs = run_mcmc_per_state(
+    ...         n_states=4,
+    ...         n_dims=[3, 2, 4, 1],
+    ...         n_walkers=32,
+    ...         n_steps=1000,
+    ...         pos=initial_positions,
+    ...         log_posterior=my_log_posterior,
+    ...         state_pool=state_pool
+    ...     )
+    
+    Using with both state and emcee parallelism:
+    
     >>> from schwimmbad import MPIPool
-    >>> with MPIPool() as pool:
+    >>> with MPIPool() as state_pool, ProcessPoolExecutor() as emcee_pool:
     ...     ensembles, log_probs = run_mcmc_per_state(
     ...         n_states=2,
     ...         n_dims=[3, 2],
@@ -129,7 +154,8 @@ def run_mcmc_per_state(
     ...         n_steps=1000,
     ...         pos=initial_positions,
     ...         log_posterior=my_log_posterior,
-    ...         pool=pool
+    ...         state_pool=state_pool,
+    ...         emcee_pool=emcee_pool
     ...     )
     """
 
@@ -156,29 +182,76 @@ def run_mcmc_per_state(
         print("\nNumber of walkers               : ", n_walkers)
         print("\nNumber of states being sampled: ", n_states)
         print("Dimensions of each state: ", n_dims)
+        if state_pool is not None:
+            print("Using state-level parallelism")
+        if emcee_pool is not None:
+            print("Using emcee-level parallelism")
 
-    samples: list[FloatArray] = []
-    log_posterior_ens: list[FloatArray] = []
-    auto_correlation: list[FloatArray] = []
-    for i in range(n_states):  # loop over states
-        _log_posterior = partial(log_posterior, state=i)
-        _samples, _log_posterior_ens, _auto_corr = process_state(
-            log_posterior=_log_posterior,
-            n_walkers=n_walkers[i],
-            pos=pos[i],
-            n_steps=n_steps[i],
-            discard=discard[i],
-            thin=thin[i],
-            parallel=parallel[i],
-            n_processors=n_processors,
-            skip_initial_state_check=skip_initial_state_check,
-            verbose=verbose,
-            pool=pool,
-            **kwargs,
-        )
-        samples.append(_samples)
-        log_posterior_ens.append(_log_posterior_ens)
-        auto_correlation.append(_auto_corr)
+    # Prepare emcee pool configuration to avoid pickling issues
+    emcee_pool_config = None
+    if emcee_pool is not None:
+        # Determine pool type and configuration
+        if hasattr(emcee_pool, '__class__'):
+            pool_class_name = emcee_pool.__class__.__name__
+            if pool_class_name == 'ProcessPoolExecutor':
+                emcee_pool_config = {
+                    'type': 'ProcessPoolExecutor',
+                    'kwargs': {'max_workers': emcee_pool._max_workers}
+                }
+            elif pool_class_name == 'ThreadPoolExecutor':
+                emcee_pool_config = {
+                    'type': 'ThreadPoolExecutor',
+                    'kwargs': {'max_workers': emcee_pool._max_workers}
+                }
+
+    # Prepare state processing arguments
+    state_args = []
+    for i in range(n_states):
+        args_dict = {
+            'state_idx': i,
+            'log_posterior': log_posterior,
+            'n_walkers': n_walkers[i],
+            'pos': pos[i],
+            'n_steps': n_steps[i],
+            'discard': discard[i],
+            'thin': thin[i],
+            'parallel': parallel[i],
+            'n_processors': n_processors,
+            'skip_initial_state_check': skip_initial_state_check,
+            'verbose': verbose,
+            **kwargs
+        }
+
+        # Add emcee pool config for state-level parallelism
+        if state_pool is not None:
+            args_dict['emcee_pool_config'] = emcee_pool_config
+        else:
+            # For sequential processing, pass the pool directly
+            args_dict['emcee_pool'] = emcee_pool
+
+        state_args.append(args_dict)
+
+    # Process states in parallel or sequentially
+    if state_pool is not None:
+        # Use provided state pool for parallel processing
+        results = list(state_pool.map(_process_single_state, state_args))
+    elif n_state_processors is not None and n_state_processors > 1:
+        # Create internal ProcessPoolExecutor for state parallelism
+        with ProcessPoolExecutor(max_workers=n_state_processors) as executor:
+            results = list(executor.map(_process_single_state, state_args))
+    else:
+        # Sequential processing (original behavior)
+        # For sequential, we can pass emcee_pool directly since no pickling needed
+        for args in state_args:
+            if 'emcee_pool_config' in args:
+                del args['emcee_pool_config']
+            args['emcee_pool'] = emcee_pool
+        results = [_process_single_state(args) for args in state_args]
+
+    # Unpack results
+    samples = [result[0] for result in results]
+    log_posterior_ens = [result[1] for result in results]
+    auto_correlation = [result[2] for result in results]
 
     if auto_thin:
         samples, log_posterior_ens = _perform_auto_thinning(
@@ -257,3 +330,58 @@ def _perform_auto_thinning(
         log_posterior_ens_auto.append(log_posterior_ens[i][burn_in::thin])
 
     return samples_auto, log_posterior_ens_auto
+
+
+def _process_single_state(state_args: dict) -> tuple[FloatArray, FloatArray, FloatArray]:
+    """Process a single state for parallel state-level execution.
+    
+    This function is designed to be called by pool.map() for state-level parallelism.
+    
+    Parameters
+    ----------
+    state_args : dict
+        Dictionary containing all arguments needed to process a single state.
+        
+    Returns
+    -------
+    tuple
+        Samples, log posterior values, and autocorrelation times for the state.
+    """
+    state_idx = state_args['state_idx']
+    log_posterior = state_args['log_posterior']
+
+    # Handle emcee pool creation (avoid pickling issues)
+    emcee_pool_config = state_args.get('emcee_pool_config', None)
+    emcee_pool = None
+
+    if emcee_pool_config is not None:
+        pool_type = emcee_pool_config['type']
+        pool_kwargs = emcee_pool_config.get('kwargs', {})
+
+        if pool_type == 'ProcessPoolExecutor':
+            from concurrent.futures import ProcessPoolExecutor
+            emcee_pool = ProcessPoolExecutor(**pool_kwargs)
+        elif pool_type == 'ThreadPoolExecutor':
+            from concurrent.futures import ThreadPoolExecutor
+            emcee_pool = ThreadPoolExecutor(**pool_kwargs)
+        # Add other pool types as needed
+
+    # Create partial log posterior for this state
+    _log_posterior = partial(log_posterior, state=state_idx)
+
+    # Remove state-specific args from kwargs
+    process_kwargs = {k: v for k, v in state_args.items()
+                     if k not in ['state_idx', 'log_posterior', 'emcee_pool_config']}
+
+    try:
+        result = process_state(
+            log_posterior=_log_posterior,
+            pool=emcee_pool,
+            **process_kwargs
+        )
+    finally:
+        # Clean up emcee pool if we created it
+        if emcee_pool is not None and emcee_pool_config is not None:
+            emcee_pool.shutdown(wait=True)
+
+    return result

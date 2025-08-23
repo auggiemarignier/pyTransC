@@ -1,6 +1,10 @@
 """Test the ensemble resampler."""
 
+import multiprocessing
+from concurrent.futures import ProcessPoolExecutor
+
 import numpy as np
+import pytest
 
 from pytransc.samplers.ensemble_resampler import (
     EnsembleResamplerChain,
@@ -8,8 +12,16 @@ from pytransc.samplers.ensemble_resampler import (
     _log_prob_sample,
     _propose_member_in_state,
     _propose_state,
+    run_ensemble_resampler,
     update_chain,
 )
+
+# Set multiprocessing start method for testing
+try:
+    multiprocessing.set_start_method('fork', force=True)
+except RuntimeError:
+    # Already set, ignore
+    pass
 
 
 def test_update_chain_accept():
@@ -88,3 +100,120 @@ def test__propose_state() -> None:
         state = _propose_state(current_state, n_states, weights)
         assert 0 <= state < n_states
         assert state != current_state
+
+
+class TestEnsembleResamplerParallelism:
+    """Test parallelism functionality in ensemble resampler."""
+
+    @pytest.fixture
+    def ensemble_data(self):
+        """Create test ensemble data."""
+        n_states = 2
+        n_dims = [2, 3]
+        n_samples = [50, 60]
+        
+        # Create mock ensemble data
+        log_posterior_ens = []
+        log_pseudo_prior_ens = []
+        
+        for i in range(n_states):
+            # Mock log posterior values
+            log_post = np.random.normal(-10, 2, n_samples[i])
+            log_posterior_ens.append(log_post)
+            
+            # Mock log pseudo prior values
+            log_pseudo = np.random.normal(-12, 2, n_samples[i])
+            log_pseudo_prior_ens.append(log_pseudo)
+        
+        return n_states, n_dims, log_posterior_ens, log_pseudo_prior_ens
+
+    def test_sequential_ensemble_resampler(self, ensemble_data):
+        """Test sequential ensemble resampler execution."""
+        n_states, n_dims, log_posterior_ens, log_pseudo_prior_ens = ensemble_data
+        
+        results = run_ensemble_resampler(
+            n_walkers=8,
+            n_steps=20,
+            n_states=n_states,
+            n_dims=n_dims,
+            log_posterior_ens=log_posterior_ens,
+            log_pseudo_prior_ens=log_pseudo_prior_ens,
+            parallel=False,
+            progress=False
+        )
+        
+        # Validate results
+        assert results.n_walkers == 8
+        assert results.n_states == n_states
+        # Note: ensemble resampler does n_steps - 1 internally
+        assert results.n_steps == 19
+        assert len(results.chains) == 8
+
+    def test_parallel_ensemble_resampler(self, ensemble_data):
+        """Test parallel ensemble resampler execution."""
+        n_states, n_dims, log_posterior_ens, log_pseudo_prior_ens = ensemble_data
+        
+        results = run_ensemble_resampler(
+            n_walkers=8,
+            n_steps=20,
+            n_states=n_states,
+            n_dims=n_dims,
+            log_posterior_ens=log_posterior_ens,
+            log_pseudo_prior_ens=log_pseudo_prior_ens,
+            parallel=True,
+            n_processors=2,
+            progress=False
+        )
+        
+        # Validate results
+        assert results.n_walkers == 8
+        assert results.n_states == n_states
+        # Note: ensemble resampler does n_steps - 1 internally
+        assert results.n_steps == 19
+        assert len(results.chains) == 8
+
+    def test_ensemble_resampler_consistency(self, ensemble_data):
+        """Test that parallel and sequential give equivalent results structure."""
+        n_states, n_dims, log_posterior_ens, log_pseudo_prior_ens = ensemble_data
+        
+        # Use same seed for reproducibility
+        seed = 12345
+        
+        # Sequential results
+        results_seq = run_ensemble_resampler(
+            n_walkers=4,
+            n_steps=50,
+            n_states=n_states,
+            n_dims=n_dims,
+            log_posterior_ens=log_posterior_ens,
+            log_pseudo_prior_ens=log_pseudo_prior_ens,
+            seed=seed,
+            parallel=False,
+            progress=False
+        )
+        
+        # Parallel results
+        results_par = run_ensemble_resampler(
+            n_walkers=4,
+            n_steps=50,
+            n_states=n_states,
+            n_dims=n_dims,
+            log_posterior_ens=log_posterior_ens,
+            log_pseudo_prior_ens=log_pseudo_prior_ens,
+            seed=seed,
+            parallel=True,
+            n_processors=2,
+            progress=False
+        )
+        
+        # Results should have same structure
+        assert results_seq.n_walkers == results_par.n_walkers
+        assert results_seq.n_states == results_par.n_states
+        assert results_seq.n_steps == results_par.n_steps
+        
+        # State visit patterns should be similar (allowing for randomness)
+        seq_visits = np.sum(results_seq.state_chain_tot, axis=0)
+        par_visits = np.sum(results_par.state_chain_tot, axis=0)
+        
+        # Check that both visited all states (basic sanity check)
+        assert np.all(seq_visits > 0) or np.all(par_visits > 0)  # At least one should visit all
