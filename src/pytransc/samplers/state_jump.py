@@ -1,9 +1,12 @@
 """State-Jump Sampling for TransC."""
 
 import logging
+import multiprocessing
 import random
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from enum import StrEnum, auto
+from functools import partial
 
 import numpy as np
 from tqdm import tqdm
@@ -200,6 +203,7 @@ def run_state_jump_sampler(  # Independent state MCMC sampler on product space w
     parallel=False,
     n_processors=1,
     progress=False,
+    walker_pool=None,
 ) -> MultiWalkerStateJumpChain:
     """Run MCMC sampler with direct jumps between states of different states.
 
@@ -246,6 +250,11 @@ def run_state_jump_sampler(  # Independent state MCMC sampler on product space w
         Number of processors to use if parallel=True. Default is 1.
     progress : bool, optional
         Whether to display progress information. Default is False.
+    walker_pool : Any | None, optional
+        User-provided pool for parallelizing walker execution. If provided, this takes
+        precedence over the parallel and n_processors parameters for walker-level
+        parallelism. The pool must implement a map() method compatible with the
+        standard library's map() function. Default is None.
 
     Returns
     -------
@@ -271,6 +280,8 @@ def run_state_jump_sampler(  # Independent state MCMC sampler on product space w
 
     Examples
     --------
+    Basic usage:
+    
     >>> results = run_state_jump_sampler(
     ...     n_walkers=32,
     ...     n_steps=1000,
@@ -283,6 +294,39 @@ def run_state_jump_sampler(  # Independent state MCMC sampler on product space w
     ...     log_proposal=my_log_proposal,
     ...     prob_state=0.2
     ... )
+
+    Using with user-provided walker pool:
+    
+    >>> from concurrent.futures import ProcessPoolExecutor
+    >>> with ProcessPoolExecutor(max_workers=4) as walker_pool:
+    ...     results = run_state_jump_sampler(
+    ...         n_walkers=32,
+    ...         n_steps=1000,
+    ...         n_states=3,
+    ...         n_dims=[2, 3, 1],
+    ...         start_positions=start_positions,
+    ...         start_states=start_states,
+    ...         log_posterior=my_log_posterior,
+    ...         log_pseudo_prior=my_log_pseudo_prior,
+    ...         log_proposal=my_log_proposal,
+    ...         walker_pool=walker_pool
+    ...     )
+
+    Using with internal parallel processing:
+    
+    >>> results = run_state_jump_sampler(
+    ...     n_walkers=32,
+    ...     n_steps=1000,
+    ...     n_states=3,
+    ...     n_dims=[2, 3, 1],
+    ...     start_positions=start_positions,
+    ...     start_states=start_states,
+    ...     log_posterior=my_log_posterior,
+    ...     log_pseudo_prior=my_log_pseudo_prior,
+    ...     log_proposal=my_log_proposal,
+    ...     parallel=True,
+    ...     n_processors=4
+    ... )
     """
 
     logger.info("Running state-jump trans-C sampler")
@@ -292,7 +336,7 @@ def run_state_jump_sampler(  # Independent state MCMC sampler on product space w
 
     random.seed(seed)
 
-    if parallel:  # put random walkers on different processors
+    if walker_pool is not None or parallel:  # put random walkers on different processors
         chains = _run_state_jump_sampler_parallel(
             n_walkers,
             n_steps,
@@ -305,6 +349,7 @@ def run_state_jump_sampler(  # Independent state MCMC sampler on product space w
             prob_state=prob_state,
             n_processors=n_processors,
             progress=progress,
+            walker_pool=walker_pool,
         )
     else:
         chains = _run_state_jump_sampler_serial(
@@ -322,6 +367,21 @@ def run_state_jump_sampler(  # Independent state MCMC sampler on product space w
     return MultiWalkerStateJumpChain(chains)
 
 
+def _mcmc_walker_job(job_data, n_states, log_posterior, log_pseudo_prior, log_proposal, n_steps, prob_state):
+    """Wrapper function for multiprocessing that unpacks job data."""
+    initial_state, initial_model = job_data
+    return _mcmc_walker(
+        n_states,
+        initial_state,
+        initial_model,
+        log_posterior,
+        log_pseudo_prior,
+        log_proposal,
+        n_steps,
+        prob_state,
+    )
+
+
 def _run_state_jump_sampler_parallel(
     n_walkers: int,
     n_steps: int,
@@ -334,15 +394,63 @@ def _run_state_jump_sampler_parallel(
     prob_state=0.1,
     n_processors=1,
     progress=False,
+    walker_pool=None,
 ) -> list[StateJumpChain]:
-    """Run the state jump sampler in parallel mode using multiprocessing.
-
-    THIS HAS NOT BEEN TESTED!
+    """Run the state jump sampler in parallel mode using walker pool.
+    
+    Uses non-daemon processes to enable nested parallelism compatibility.
     """
-    raise NotImplementedError(
-        "The parallel implementation of the state jump sampler is untested and has been disabled. "
-        "Please implement tests and validate this function before enabling parallel execution."
+    if n_processors == 1:
+        # set number of processors equal to those available
+        n_processors = multiprocessing.cpu_count()
+    
+    # Validate walker_pool if provided
+    if walker_pool is not None and not hasattr(walker_pool, 'map'):
+        raise AttributeError(
+            "walker_pool must implement a 'map' method compatible with the standard library's map() function."
+        )
+    
+    # Create a partial function that can be pickled
+    walker_func = partial(
+        _mcmc_walker_job,
+        n_states=n_states,
+        log_posterior=log_posterior,
+        log_pseudo_prior=log_pseudo_prior,
+        log_proposal=log_proposal,
+        n_steps=n_steps,
+        prob_state=prob_state,
     )
+    
+    # Create jobs list with individual walker data
+    jobs = []
+    for walker_idx in range(n_walkers):
+        job = (start_states[walker_idx], start_positions[walker_idx])
+        jobs.append(job)
+    
+    # Run the parallel jobs using provided pool or ProcessPoolExecutor
+    if walker_pool is not None:
+        # Use the provided external pool
+        if progress:
+            chains: list[StateJumpChain] = list(
+                tqdm(walker_pool.map(walker_func, jobs), total=len(jobs))
+            )
+        else:
+            chains: list[StateJumpChain] = list(
+                walker_pool.map(walker_func, jobs)
+            )
+    else:
+        # Use ProcessPoolExecutor (non-daemon processes)
+        with ProcessPoolExecutor(max_workers=n_processors) as executor:
+            if progress:
+                chains: list[StateJumpChain] = list(
+                    tqdm(executor.map(walker_func, jobs), total=len(jobs))
+                )
+            else:
+                chains: list[StateJumpChain] = list(
+                    executor.map(walker_func, jobs)
+                )
+    
+    return chains
 def _run_state_jump_sampler_serial(
     n_walkers: int,
     n_steps: int,
