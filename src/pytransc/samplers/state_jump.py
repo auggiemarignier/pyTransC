@@ -204,6 +204,7 @@ def run_state_jump_sampler(  # Independent state MCMC sampler on product space w
     n_processors=1,
     progress=False,
     walker_pool=None,
+    forward_pool=None,
 ) -> MultiWalkerStateJumpChain:
     """Run MCMC sampler with direct jumps between states of different states.
 
@@ -255,6 +256,13 @@ def run_state_jump_sampler(  # Independent state MCMC sampler on product space w
         precedence over the parallel and n_processors parameters for walker-level
         parallelism. The pool must implement a map() method compatible with the
         standard library's map() function. Default is None.
+    forward_pool : Any | None, optional
+        User-provided pool for parallelizing forward solver calls within
+        log_posterior evaluations. If provided, the pool will be made available
+        to log_posterior functions via get_forward_pool() from pytransc.utils.forward_context.
+        The pool must implement a map() method compatible with the standard library's 
+        map() function. Supports ProcessPoolExecutor, ThreadPoolExecutor, 
+        and schwimmbad pools. Default is None.
 
     Returns
     -------
@@ -327,12 +335,35 @@ def run_state_jump_sampler(  # Independent state MCMC sampler on product space w
     ...     parallel=True,
     ...     n_processors=4
     ... )
+
+    Using with forward pool for parallel forward solver calls:
+    
+    >>> from concurrent.futures import ProcessPoolExecutor
+    >>> with ProcessPoolExecutor(max_workers=4) as forward_pool:
+    ...     results = run_state_jump_sampler(
+    ...         n_walkers=32,
+    ...         n_steps=1000,
+    ...         n_states=3,
+    ...         n_dims=[2, 3, 1],
+    ...         start_positions=start_positions,
+    ...         start_states=start_states,
+    ...         log_posterior=my_log_posterior,
+    ...         log_pseudo_prior=my_log_pseudo_prior,
+    ...         log_proposal=my_log_proposal,
+    ...         forward_pool=forward_pool
+    ...     )
     """
 
     logger.info("Running state-jump trans-C sampler")
     logger.info("Number of walkers: %d", n_walkers)
     logger.info("Number of states being sampled: %d", n_states)
     logger.info("Dimensions of each state: %s", n_dims)
+
+    # Early validation of forward pool if provided
+    if forward_pool is not None:
+        from ..utils.forward_context import set_forward_pool, clear_forward_pool
+        set_forward_pool(forward_pool)  # Validates map() method
+        clear_forward_pool()  # Clear after validation
 
     random.seed(seed)
 
@@ -350,6 +381,7 @@ def run_state_jump_sampler(  # Independent state MCMC sampler on product space w
             n_processors=n_processors,
             progress=progress,
             walker_pool=walker_pool,
+            forward_pool=forward_pool,
         )
     else:
         chains = _run_state_jump_sampler_serial(
@@ -363,11 +395,12 @@ def run_state_jump_sampler(  # Independent state MCMC sampler on product space w
             log_proposal,
             prob_state=prob_state,
             progress=progress,
+            forward_pool=forward_pool,
         )
     return MultiWalkerStateJumpChain(chains)
 
 
-def _mcmc_walker_job(job_data, n_states, log_posterior, log_pseudo_prior, log_proposal, n_steps, prob_state):
+def _mcmc_walker_job(job_data, n_states, log_posterior, log_pseudo_prior, log_proposal, n_steps, prob_state, forward_pool=None):
     """Wrapper function for multiprocessing that unpacks job data."""
     initial_state, initial_model = job_data
     return _mcmc_walker(
@@ -379,6 +412,7 @@ def _mcmc_walker_job(job_data, n_states, log_posterior, log_pseudo_prior, log_pr
         log_proposal,
         n_steps,
         prob_state,
+        forward_pool=forward_pool,
     )
 
 
@@ -395,6 +429,7 @@ def _run_state_jump_sampler_parallel(
     n_processors=1,
     progress=False,
     walker_pool=None,
+    forward_pool=None,
 ) -> list[StateJumpChain]:
     """Run the state jump sampler in parallel mode using walker pool.
     
@@ -419,6 +454,7 @@ def _run_state_jump_sampler_parallel(
         log_proposal=log_proposal,
         n_steps=n_steps,
         prob_state=prob_state,
+        forward_pool=forward_pool,
     )
     
     # Create jobs list with individual walker data
@@ -462,6 +498,7 @@ def _run_state_jump_sampler_serial(
     log_proposal: ProposableMultiStateDensity,
     prob_state=0.1,
     progress=False,
+    forward_pool=None,
 ) -> list[StateJumpChain]:
     """Run the state jump sampler in serial mode."""
 
@@ -478,6 +515,7 @@ def _run_state_jump_sampler_serial(
             log_proposal,
             n_steps,
             prob_state,
+            forward_pool=forward_pool,
         )
 
         chains.append(state_jump_chain)
@@ -494,6 +532,7 @@ def _mcmc_walker(
     log_proposal: ProposableMultiStateDensity,
     n_steps: int,
     prob_state: float,
+    forward_pool=None,
 ) -> StateJumpChain:
     chain = StateJumpChain(n_states)
     sample = Sample(model=initial_model, state=initial_state)
@@ -505,6 +544,7 @@ def _mcmc_walker(
             log_proposal,
             n_states,
             prob_state,
+            forward_pool=forward_pool,
         )
         update_chain(chain, sample, proposal_type, accept)
 
@@ -518,6 +558,7 @@ def _chain_step(
     log_proposal: ProposableMultiStateDensity,
     n_states: int,
     prob_state: float,
+    forward_pool=None,
 ) -> tuple[Sample, ProposalType, bool]:
     """Perform a single step of the state jump sampler.
 
@@ -547,7 +588,7 @@ def _chain_step(
         logger.debug("Within state %d, proposing model change", current.state)
 
     log_posterior_prob_ratio = _log_posterior_prob_ratio(
-        log_posterior, proposed, current
+        log_posterior, proposed, current, forward_pool=forward_pool
     )
 
     # Metropolis-Hastings acceptance criterion
@@ -611,9 +652,23 @@ def _within_state_log_proposal_prob_ratio(
 
 
 def _log_posterior_prob_ratio(
-    log_posterior: MultiStateDensity, proposed: Sample, current: Sample
+    log_posterior: MultiStateDensity, proposed: Sample, current: Sample, forward_pool=None
 ) -> float:
     """Calculate the log posterior probability ratio for a proposed model and state."""
-    log_posterior_proposed = log_posterior(proposed.model, proposed.state)
-    log_posterior_current = log_posterior(current.model, current.state)
-    return log_posterior_proposed - log_posterior_current
+    # Import within function to avoid circular imports
+    from ..utils.forward_context import set_forward_pool, clear_forward_pool
+    
+    try:
+        # Set forward pool before log_posterior calls
+        if forward_pool is not None:
+            set_forward_pool(forward_pool)
+        
+        log_posterior_proposed = log_posterior(proposed.model, proposed.state)
+        log_posterior_current = log_posterior(current.model, current.state)
+        
+        return log_posterior_proposed - log_posterior_current
+        
+    finally:
+        # Always clean up after calls
+        if forward_pool is not None:
+            clear_forward_pool()
