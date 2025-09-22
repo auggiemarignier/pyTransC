@@ -1,18 +1,19 @@
 """Ensemble resampler for TransC."""
 
 import logging
-import multiprocessing
+#import multiprocessing
 import random
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from functools import partial
 
-# Set multiprocessing start method to fork to avoid pickling issues
-try:
-    multiprocessing.set_start_method('fork', force=True)
-except RuntimeError:
-    # Already set, ignore
-    pass
+## Set multiprocessing start method to fork to avoid pickling issues
+# This should be no longer needed as we use concurrent.futures - JRH - 2025-09-22
+#try:
+#    multiprocessing.set_start_method('fork', force=True)
+#except RuntimeError:
+#    # Already set, ignore
+#    pass
 
 import numpy as np
 from tqdm import tqdm
