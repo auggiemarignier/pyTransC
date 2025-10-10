@@ -339,9 +339,9 @@ def _run_mcmc_walker_parallel(
 
     Uses non-daemon processes to enable nested parallelism compatibility.
     """
-    if n_processors == 1:
-        # set number of processors equal to those available
-        n_processors = multiprocessing.cpu_count()
+    #if n_processors == 1:   JRH dow we really need this?
+    #    # set number of processors equal to those available
+    #    n_processors = multiprocessing.cpu_count()
 
     # input data for parallel jobs
     jobs = random.choices(range(n_states), k=n_walkers)
