@@ -220,8 +220,6 @@ def run_product_space_sampler(
     log_posterior: MultiStateDensity,
     log_pseudo_prior: MultiStateDensity,
     seed: int | None = 61254557,
-    parallel: bool = False,
-    n_processors: int = 1,
     progress: bool = False,
     pool: Any | None = None,
     forward_pool: Any | None = None,
@@ -255,17 +253,12 @@ def run_product_space_sampler(
         Note: Must be normalized over respective state spaces.
     seed : int, optional
         Random number seed for reproducible results. Default is 61254557.
-    parallel : bool, optional
-        Whether to use multiprocessing to parallelize over walkers. Default is False.
-    n_processors : int, optional
-        Number of processors to use if parallel=True. Default is 1.
     progress : bool, optional
         Whether to display progress information. Default is False.
     pool : Any | None, optional
-        User-provided pool for parallel processing. If provided, this takes
-        precedence over the parallel and n_processors parameters. The pool
-        must implement a map() method compatible with the standard library's
-        map() function. Default is None.
+        User-provided pool for parallel processing. The pool must implement
+        a map() method compatible with the standard library's map() function.
+        Default is None.
     forward_pool : Any | None, optional
         User-provided pool for parallelizing forward solver calls within
         log_posterior evaluations. If provided, the pool will be made available
@@ -366,8 +359,6 @@ def run_product_space_sampler(
         n_steps=n_steps,
         initial_state=pos_ps,
         pool=pool,
-        parallel=parallel,
-        n_processors=n_processors,
         progress=progress,
         **kwargs,
     )

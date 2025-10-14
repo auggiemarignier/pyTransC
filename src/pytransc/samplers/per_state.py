@@ -9,13 +9,6 @@ from typing import Any
 
 import numpy as np
 
-# Set multiprocessing start method to fork to avoid pickling issues
-try:
-    multiprocessing.set_start_method('fork', force=True)
-except RuntimeError:
-    # Already set, ignore
-    pass
-
 from ..utils.types import FloatArray, MultiStateDensity
 from ._emcee import perform_sampling_with_emcee
 
@@ -113,8 +106,6 @@ def run_mcmc_per_state(
     seed: int = 61254557,
     state_pool: Any | None = None,
     emcee_pool: Any | None = None,
-    parallel: bool | list[bool] = False,
-    n_processors: int = 1,
     n_state_processors: int | None = None,
     skip_initial_state_check: bool = False,
     verbose: bool = True,
@@ -156,11 +147,6 @@ def run_mcmc_per_state(
         ignoring the `thin` parameter. Default is False.
     seed : int, optional
         Random number seed for reproducible results. Default is 61254557.
-    parallel : bool or list of bool, optional
-        Whether to use multiprocessing for parallel sampling. If bool, same
-        setting used for all states. Default is False.
-    n_processors : int, optional
-        Number of processors to use if parallel=True. Default is 1.
     skip_initial_state_check : bool, optional
         Whether to skip emcee's initial state check. Default is False.
     verbose : bool, optional
@@ -280,8 +266,6 @@ def run_mcmc_per_state(
         thin = [thin] * n_states
     if not isinstance(n_steps, list):
         n_steps = [n_steps] * n_states
-    if isinstance(parallel, bool):
-        parallel = [parallel] * n_states
 
     if auto_thin:
         # ignore thinning factor because we are post thinning by the auto-correlation times
@@ -344,8 +328,6 @@ def run_mcmc_per_state(
             'n_steps': n_steps[i],
             'discard': discard[i],
             'thin': thin[i],
-            'parallel': parallel[i],
-            'n_processors': n_processors,
             'skip_initial_state_check': skip_initial_state_check,
             'verbose': verbose,
             **kwargs
@@ -404,8 +386,6 @@ def process_state(
     n_steps: int,
     discard: int = 0,
     thin: int = 1,
-    parallel: bool = False,
-    n_processors: int = 1,
     verbose: bool = True,
     pool: Any | None = None,
     forward_pool: Any | None = None,
@@ -444,8 +424,6 @@ def process_state(
             n_steps=n_steps,
             initial_state=pos,
             pool=pool,
-            parallel=parallel,
-            n_processors=n_processors,
             progress=verbose,
             **kwargs,
         )

@@ -161,8 +161,6 @@ def run_ensemble_resampler(  # Independent state Marginal Likelihoods from pre-c
     log_posterior_ens: StateOrderedEnsemble,
     log_pseudo_prior_ens: StateOrderedEnsemble,
     seed=61254557,
-    parallel=False,
-    n_processors=1,
     state_proposal_weights: list[list[float]] | None = None,
     progress=False,
     walker_pool=None,
@@ -196,10 +194,6 @@ def run_ensemble_resampler(  # Independent state Marginal Likelihoods from pre-c
         for the ensemble members in that state.
     seed : int, optional
         Random number seed for reproducible results. Default is 61254557.
-    parallel : bool, optional
-        Whether to use multiprocessing to parallelize over walkers. Default is False.
-    n_processors : int, optional
-        Number of processors to use if parallel=True. Default is 1.
     state_proposal_weights : list of list of float, optional
         Weights for proposing transitions between states. Should be a matrix
         where element [i][j] is the weight for proposing state j from state i.
@@ -207,10 +201,9 @@ def run_ensemble_resampler(  # Independent state Marginal Likelihoods from pre-c
     progress : bool, optional
         Whether to display progress information. Default is False.
     walker_pool : Any | None, optional
-        User-provided pool for parallelizing walker execution. If provided, this takes
-        precedence over the parallel and n_processors parameters for walker-level
-        parallelism. The pool must implement a map() method compatible with the
-        standard library's map() function. Default is None.
+        User-provided pool for parallelizing walker execution. The pool must
+        implement a map() method compatible with the standard library's map()
+        function. Default is None.
     state_pool : Any | None, optional
         User-provided pool for parallelizing state-level operations such as
         pseudo-prior evaluation across states. Currently reserved for future
@@ -291,7 +284,7 @@ def run_ensemble_resampler(  # Independent state Marginal Likelihoods from pre-c
     logger.info("Dimensions of each state        : %s", n_dims)
 
     random.seed(seed)
-    if walker_pool is not None or parallel:
+    if walker_pool is not None:
         chains = _run_mcmc_walker_parallel(
             n_walkers,
             n_states,
@@ -300,7 +293,6 @@ def run_ensemble_resampler(  # Independent state Marginal Likelihoods from pre-c
             log_posterior_ens,
             log_pseudo_prior_ens,
             state_proposal_weights=_state_proposal_weights,
-            n_processors=n_processors,
             progress=progress,
             walker_pool=walker_pool,
             forward_pool=forward_pool,
@@ -330,19 +322,14 @@ def _run_mcmc_walker_parallel(
     log_posterior_ens: StateOrderedEnsemble,
     log_pseudo_prior_ens: StateOrderedEnsemble,
     state_proposal_weights: list[list[float]],
-    n_processors: int = 1,
     progress: bool = False,
     walker_pool=None,
     forward_pool=None,
 ) -> list[EnsembleResamplerChain]:
-    """Run the ensemble resampler in parallel using ProcessPoolExecutor.
+    """Run the ensemble resampler in parallel using user-provided walker pool.
 
     Uses non-daemon processes to enable nested parallelism compatibility.
     """
-    #if n_processors == 1:   JRH dow we really need this?
-    #    # set number of processors equal to those available
-    #    n_processors = multiprocessing.cpu_count()
-
     # input data for parallel jobs
     jobs = random.choices(range(n_states), k=n_walkers)
 
@@ -357,28 +344,15 @@ def _run_mcmc_walker_parallel(
         state_proposal_weights=state_proposal_weights,
     )
 
-    # run the parallel jobs using provided pool or ProcessPoolExecutor
-    if walker_pool is not None:
-        # Use the provided external pool
-        if progress:
-            chains: list[EnsembleResamplerChain] = list(
-                tqdm(walker_pool.map(func, jobs), total=len(jobs))
-            )
-        else:
-            chains: list[EnsembleResamplerChain] = list(
-                walker_pool.map(func, jobs)
-            )
+    # run the parallel jobs using provided pool
+    if progress:
+        chains: list[EnsembleResamplerChain] = list(
+            tqdm(walker_pool.map(func, jobs), total=len(jobs))
+        )
     else:
-        # Use ProcessPoolExecutor (non-daemon processes)
-        with ProcessPoolExecutor(max_workers=n_processors) as executor:
-            if progress:
-                chains: list[EnsembleResamplerChain] = list(
-                    tqdm(executor.map(func, jobs), total=len(jobs))
-                )
-            else:
-                chains: list[EnsembleResamplerChain] = list(
-                    executor.map(func, jobs)
-                )
+        chains: list[EnsembleResamplerChain] = list(
+            walker_pool.map(func, jobs)
+        )
 
     return chains
 

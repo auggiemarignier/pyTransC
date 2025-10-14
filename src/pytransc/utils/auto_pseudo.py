@@ -7,9 +7,7 @@ import numpy as np
 from scipy import stats
 from sklearn.mixture import GaussianMixture
 
-from ..samplers.per_state import run_mcmc_per_state
-from .exceptions import InputError
-from .types import FloatArray, MultiStateDensity, SampleableMultiStateDensity
+from .types import FloatArray, SampleableMultiStateDensity
 
 
 class PseudoPriorBuilders(StrEnum):
@@ -83,26 +81,35 @@ def rescale_gmm_covariances(gmm: GaussianMixture,
     n_features = gmm.means_.shape[1]
     n_components = gmm.n_components
 
-    s_is_scalar = s.ndim == 0 or (s.ndim == 1 and s.size == 1)
-
     # --- 0. Input Validation and Setup for Scaling ---
 
     if gmm.covariance_type == 'spherical':
-        if not s_is_scalar:
+        # Spherical covariance requires a scalar (uniform scale across all features)
+        # Accept either a 0-d scalar or extract scalar from 1-d array
+        if s.ndim == 0:
+            s_value = float(s)
+        elif s.ndim == 1 and s.size == 1:
+            # Single-element array: extract the scalar value
+            s_value = float(s[0])
+        else:
             raise ValueError(
-                "For 'spherical' covariance_type, the scaling factor 's' must be a scalar "
-                "representing a uniform scale across all features. Provided shape: {s.shape}"
+                f"For 'spherical' covariance_type, the scaling factor 's' must be a scalar "
+                f"or single-element array. Provided shape: {s.shape}"
             )
-        # Convert scalar s to a float for use in multiplication later
-        s_value = float(s)
-        # For the 'spherical' case, the matrix S (and thus S_diag) is not used.
+        # For the 'spherical' case, the matrix S is not used.
         S = None
     else:
-        # Non-spherical types require a full scaling vector
-        if s_is_scalar or s.ndim != 1 or s.shape[0] != n_features:
+        # Non-spherical types require a 1D scaling vector with length = n_features
+        # Note: For 1D parameter spaces (n_features=1), s.shape=(1,) is correct!
+        if s.ndim != 1:
             raise ValueError(
                 f"For '{gmm.covariance_type}' covariance_type, scaling vector 's' must be "
-                f"1D and have length equal to n_features ({n_features}). Provided shape: {s.shape}"
+                f"1D. Provided shape: {s.shape} with ndim={s.ndim}"
+            )
+        if s.shape[0] != n_features:
+            raise ValueError(
+                f"For '{gmm.covariance_type}' covariance_type, scaling vector 's' must have "
+                f"length equal to n_features ({n_features}). Provided shape: {s.shape}"
             )
         # Create the diagonal scaling matrix S from the vector s
         S = np.diag(s)
@@ -194,8 +201,11 @@ def rescale_gmm_covariances(gmm: GaussianMixture,
                 # The result is stored as the transpose (lower triangular) in scikit-learn convention.
                 new_precision_cholesky[k] = np.linalg.cholesky(precision)
 
-            # Remove the added dimension for 'tied' before assignment
-            gmm.precisions_cholesky_ = new_precision_cholesky.squeeze()
+            # For 'tied', remove the added first dimension; for 'full', keep all dimensions
+            if gmm.covariance_type == 'tied':
+                gmm.precisions_cholesky_ = new_precision_cholesky[0]  # Remove first dimension only
+            else:
+                gmm.precisions_cholesky_ = new_precision_cholesky  # Keep shape (n_components, n_features, n_features)
 
         elif gmm.covariance_type in ('diag', 'spherical'):
             # For diag and spherical, Cholesky of precision is 1 / sqrt(variance)
@@ -337,61 +347,87 @@ pseudo_prior_factories: dict[PseudoPriorBuilders, PseudoPriorBuilder] = {
 
 
 def build_auto_pseudo_prior(
+    ensemble_per_state: list[FloatArray],
     pseudo_prior_type: PseudoPriorBuilders = PseudoPriorBuilders.GAUSSIAN_MIXTURE_STANDARDIZED,
-    *,
-    ensemble_per_state: list[FloatArray] | None = None,
-    log_posterior: MultiStateDensity | None = None,
-    sampling_args: dict[str, Any] = {},
     **builder_kwargs,
 ):
     """
     Build an automatic pseudo-prior function using a specified builder.
 
+    This function fits a statistical model (e.g., Gaussian mixture) to posterior
+    ensembles from each state to create a pseudo-prior for trans-conceptual sampling.
+
     Parameters
     ----------
+    ensemble_per_state : list of FloatArray
+        List of posterior samples for each state. Each array should have shape
+        (n_samples, n_features) where n_features is the dimensionality of that state.
+        Generate these samples using run_mcmc_per_state() or provide pre-existing
+        posterior ensembles.
     pseudo_prior_type : PseudoPriorBuilders, optional
         Type of pseudo-prior builder to use. Default is GAUSSIAN_MIXTURE_STANDARDIZED.
-    ensemble_per_state : list of FloatArray, optional
-        List of posterior samples for each state. If not provided, samples will be generated using MCMC.
-    log_posterior : MultiStateDensity, optional
-        Function evaluating the log-posterior for each state. Required if ensemble_per_state is not provided.
-    sampling_args : dict, optional
-        Arguments for MCMC sampling if ensemble_per_state is not provided.
+        Options include:
+        - GAUSSIAN_MIXTURE_STANDARDIZED: GMM with standardization (recommended)
+        - GAUSSIAN_MIXTURE: Standard GMM without standardization
+        - MEAN_COVARIANCE: Simple Gaussian approximation
     **builder_kwargs : dict
-        Additional arguments passed to the pseudo-prior builder.
+        Additional arguments passed to the pseudo-prior builder (e.g., n_components,
+        covariance_type for Gaussian mixture models).
 
     Returns
     -------
-    log_pseudo_prior : PseudoPrior
-        Callable function to evaluate the log pseudo-prior at a given point and state.
+    log_pseudo_prior : SampleableMultiStateDensity
+        Callable pseudo-prior object with methods:
+        - __call__(x, state): Evaluate log pseudo-prior at point x in given state
+        - draw_deviate(state): Sample from pseudo-prior for given state
+
+    Examples
+    --------
+    >>> # Generate posterior ensembles for each state
+    >>> ensemble_per_state, _ = run_mcmc_per_state(
+    ...     n_states=3, n_dims=[2, 3, 4], n_walkers=32, n_steps=5000,
+    ...     pos=initial_positions, log_posterior=log_post_func
+    ... )
+    >>>
+    >>> # Build pseudo-prior from ensembles
+    >>> pseudo_prior = build_auto_pseudo_prior(
+    ...     ensemble_per_state=ensemble_per_state,
+    ...     pseudo_prior_type=PseudoPriorBuilders.GAUSSIAN_MIXTURE_STANDARDIZED,
+    ...     n_components=3, covariance_type='full'
+    ... )
+    >>>
+    >>> # Use in trans-conceptual sampler
+    >>> result = run_state_jump_sampler(..., log_pseudo_prior=pseudo_prior)
+
+    Notes
+    -----
+    This function no longer supports automatic ensemble generation. If you previously
+    used log_posterior and sampling_args parameters, please refactor to:
+
+    1. Generate ensembles explicitly using run_mcmc_per_state()
+    2. Pass the resulting ensemble_per_state to this function
+
+    This separation provides better control over sampling parameters and makes the
+    workflow more transparent.
     """
-
-    if ensemble_per_state is None:  # generate samples for fitting
-        if log_posterior is None:
-            raise InputError(
-                "log_posterior must be provided if ensemble_per_state is not supplied."
-            )
-        if any(
-            k not in sampling_args
-            for k in ["n_states", "n_dims", "n_walkers", "n_steps", "pos"]
-        ):
-            raise InputError(
-                "sampling_args must contain 'n_states', 'n_dims', 'n_walkers', 'n_steps', and 'pos' keys."
-            )
-
-        n_states = sampling_args.pop("n_states")
-        n_dims = sampling_args.pop("n_dims")
-        n_walkers = sampling_args.pop("n_walkers")
-        n_steps = sampling_args.pop("n_steps")
-        pos = sampling_args.pop("pos")
-        ensemble_per_state, _ = run_mcmc_per_state(
-            n_states=n_states,
-            n_dims=n_dims,
-            n_walkers=n_walkers,
-            n_steps=n_steps,
-            pos=pos,
-            log_posterior=log_posterior,
-            **sampling_args,
+    if ensemble_per_state is None:
+        raise ValueError(
+            "ensemble_per_state is required and cannot be None.\n\n"
+            "The automatic ensemble generation feature has been removed for clarity.\n"
+            "Please generate posterior ensembles explicitly using run_mcmc_per_state():\n\n"
+            "  ensemble_per_state, _ = run_mcmc_per_state(\n"
+            "      n_states=n_states,\n"
+            "      n_dims=n_dims,\n"
+            "      n_walkers=n_walkers,\n"
+            "      n_steps=n_steps,\n"
+            "      pos=initial_positions,\n"
+            "      log_posterior=log_posterior_func,\n"
+            "      auto_thin=True\n"
+            "  )\n\n"
+            "Then pass the ensembles to build_auto_pseudo_prior():\n\n"
+            "  log_pseudo_prior = build_auto_pseudo_prior(\n"
+            "      ensemble_per_state=ensemble_per_state\n"
+            "  )"
         )
 
     log_pseudo_prior = pseudo_prior_factories[pseudo_prior_type](
