@@ -1,6 +1,7 @@
 # Editor temporary/working/backup files #
 #########################################
 *.swp
+.vscode
 
 # Compiled source #
 ###################
