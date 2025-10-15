@@ -135,9 +135,11 @@ from pytransc.samplers import run_state_jump_sampler
 ```
 Detailed examples of showing implementation of all three samplers can be found in
 
-[`examples/Gaussians`](./examples/Gaussians/) - Sampling across unnormalised Mulit-dimensional Gaussians with all three samplers.
+[`examples/Regression`](./examples/Regression/) - Sampling across 4 states in polynomial regression with all three samplers.
 
 [`examples/AirborneEM`](./examples/AirborneEM) - Ensemble Sampler applied to Airborne EM data.
+
+[`examples/Tomography`](./examples/Tomography) - Ensemble Sampler applied to 2D borehole tomography to demonstrate three level parallelism.
 
 ## Licensing
 `pytransc` is released as BSD-2-Clause licence.
@@ -145,6 +147,7 @@ Detailed examples of showing implementation of all three samplers can be found i
 ## Citations and Acknowledgments
 
 > *Sambridge, M., Valentine, A. & Hauser, J., 2025. Trans-Conceptual Sampling: Bayesian Inference With Competing Assumptions, JGR Solid Earth, Volume 130, Issue 8, 17 August 2025, e2024JB030470.*
+
 
 
 
